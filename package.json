@@ -1,0 +1,21 @@
+{
+	"name": "fechtbot",
+	"version": "0.0.1",
+	"description": "FechtBot",
+	"main": "bot.js",
+	"author": "Glidias",
+	"scripts": {
+		"start": "node bot.js",
+		"devstart": "nodemon bot.js"
+	},
+	"dependencies": {
+		"dice-typescript": "^1.6.1",
+		"discord.js": "^11.4.2",
+		"dotenv": "^7.0.0",
+		"mongoose": "^5.4.22",
+		"slugify": "^1.3.4"
+	},
+	"devDependencies": {
+		"nodemon": "^1.18.10"
+	}
+}
