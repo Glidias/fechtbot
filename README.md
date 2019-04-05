@@ -30,7 +30,7 @@ $ heroku create
     iii. These Include
 
     ```bash
-    DATABASE_UR
+    DATABASE_URL
 	TOKEN
 	PREFIX
 	NPM_CONFIG_PRODUCTION (Must be false)
