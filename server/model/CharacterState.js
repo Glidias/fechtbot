@@ -4,32 +4,32 @@ const Schema = mongoose.Schema;
 
 const CharacterStateSchema = new Schema(
     {
-		user_id_handle: {
-			type: String,
-			required: true	
-		},
-		fecht: {
-			type: Schema.Types.ObjectId,
-			required: true,
-			ref: 'Fecht'
-		},
-		side: {
-			type: Number,
-			default: 0
-		},
-		initVal: {
-			type: Number,
-			default: 0
-		},
-		initMask: {
-			type: Number,
-			default: 0
-		},
-		character: {
-			type: Schema.Types.ObjectId,
-			required: true,
-			ref: 'Character'
-		}
+        user_id_handle: {
+            type: String,
+            required: true	
+        },
+        fecht: {
+            type: Schema.Types.ObjectId,
+            required: true,
+            ref: 'Fecht'
+        },
+        side: {
+            type: Number,
+            default: 0
+        },
+        initVal: {
+            type: Number,
+            default: 0
+        },
+        initMask: {
+            type: Number,
+            default: 0
+        },
+        character: {
+            type: Schema.Types.ObjectId,
+            required: true,
+            ref: 'Character'
+        }
     }
 );
 

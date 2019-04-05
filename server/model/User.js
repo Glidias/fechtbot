@@ -4,14 +4,14 @@ const Schema = mongoose.Schema;
 
 const UserSchema = new Schema(
     {
-	   user_id: {
-		   type: Number,
-		   required: true
-	   },
-	   fecht: {
-			type: Schema.Types.ObjectId,
-			ref: 'Fecht'
-		}
+       user_id: {
+           type: Number,
+           required: true
+       },
+       fecht: {
+            type: Schema.Types.ObjectId,
+            ref: 'Fecht'
+        }
     }
 );
 
