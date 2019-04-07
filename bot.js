@@ -156,6 +156,19 @@ if (process.env.NODE_ENV !== 'production') {
             
           });
         break;
+        case 'say':
+          message.delete();
+          // TODO: only allow if in fecht
+          //remainingContents = remainingContents.split(" ", 2);
+          //if (remainingContents.)
+          channel.send(new Discord.RichEmbed({
+            "description": remainingContents, //remainingContents[remainingContents.length-1]
+            "author": {
+              "name": message.member.displayName, // + (remainingContents.length > 1 ? remainingContents[0] : ""),
+              "icon_url": message.author.displayAvatarURL
+            }
+          }));
+        return;
         case 'turn': // test single turn for phase
          
         break;

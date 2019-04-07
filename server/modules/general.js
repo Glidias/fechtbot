@@ -5,9 +5,8 @@ function deleteMessage(message) {
 }
 
 function sleep(ms) {
-return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
-
 function sendTempMessage(text, channel) {
     channel.send(text)
     .then((message) => {
