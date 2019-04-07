@@ -9,7 +9,7 @@ if (process.env.NODE_ENV !== 'production') {
   
   const Discord = require('discord.js');
   const client = new Discord.Client();
-  const TEST = require('./server/tests/seed/seedFunctions')
+  const TEST = require('./server/tests/seed/seedFunctions');
   
   const PREFIX = process.env.PREFIX;
   

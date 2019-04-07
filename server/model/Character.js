@@ -5,11 +5,11 @@ const Schema = mongoose.Schema;
 const CharacterSchema = new Schema(
     {
         server_id: {
-            type: Number,
+            type: String,
             required: true
         },
         user_id: {
-            type: Number,
+            type: String,
             required: true
         },
         handle: {
@@ -19,10 +19,6 @@ const CharacterSchema = new Schema(
         data: {
             type: String,
             default: ""
-        },
-        dead: {
-            type: Number,
-            default: 0
         }
     }
 );

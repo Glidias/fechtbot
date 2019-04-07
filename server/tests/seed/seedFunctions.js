@@ -9,6 +9,9 @@ const { Manuever } = require('../../model/Manuever');
 const slugify = require('slugify');
 
 const populateData = async () => {
+
+    await Fecht.deleteMany({}).exec();
+
     /*
     if (mongoose.connection.readyState === 0) {
         connect();
@@ -88,8 +91,10 @@ const populateData = async () => {
     console.log('[PROCESS:FIN] Deketed all else');
 
 
-    await mongoose.connection.close();
     */
+
+
+    await mongoose.connection.close();
 };
 
 module.exports = { populateData };

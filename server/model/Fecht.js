@@ -4,21 +4,21 @@ const Schema = mongoose.Schema;
 const FechtSchema = new Schema(
     {
         channel_id: {
-            type: Number,
+            type: String,
             required: true
         },
         pin_header_id: {
-            type: Number,
+            type: String,
             required: true,
             //default: 0
         },
         latest_footer_id: {
-            type: Number,
+            type: String,
             required: true,
             //default: 0
         },
         latest_body_id: {
-            type: Number,
+            type: String,
             required: true,
             //default: 0
         },
@@ -50,8 +50,32 @@ const FechtSchema = new Schema(
             name: {
                 type: String,
                 required: true,
+                trim: true,
+                default: ""
+            },
+            reactOnly: {
+                type: Number
+            },
+            reacts: [{
+                type: String,
+                required: true,
                 trim: true
-            }
+            }],
+            dmReacts: [{
+                type: String,
+                required: true,
+                trim: true
+            }],
+            reactsM: [{
+                type: String,
+                trim: true,
+                default: ""
+            }],
+            dmReactsM: [{
+                type: String,
+                trim: true,
+                default: ""
+            }]
         }],
         /*
         initArray: [{
@@ -65,7 +89,6 @@ const FechtSchema = new Schema(
             get: v => Math.round(v),
             set: v => Math.round(v),
             alias: 'i',
-            required: true,
             default: 0
         },
         totalUsers: {
@@ -75,8 +98,7 @@ const FechtSchema = new Schema(
         users: {
             type: Map,
             of: {
-                type: Schema.Types.ObjectId,
-                ref: 'User'
+                type: Number
             }
         }
     },

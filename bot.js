@@ -9,213 +9,157 @@ if (process.env.NODE_ENV !== 'production') {
   
   const Discord = require('discord.js');
   const client = new Discord.Client();
-  const TEST = require('./server/tests/seed/seedFunctions')
-  
+
+  const { Fecht } = require('./server/model/Fecht')
+  const {sendTempMessage} = require('./server/modules/general');
+
   const PREFIX = process.env.PREFIX;
-  
-  var initiative_table = [];
-  
-  function sort_lowestFirst(a, b) {
-    var diff = a.initVal - b.initVal
-    if(diff == 0) {
-      return Math.random() < 0.5 ? -1 : 1;
-    }
-    return diff;
-  }
-  
-  function sort_lowestFirstNegFlip(a, b) {
-    a = a.initVal;
-    b = b.initVal;
-  
-    var diff = a - b;
-    if(diff === 0) {
-      return Math.random() < 0.5 ? -1 : 1;
-    }
-  
-    if (a < 0 && b < 0) {
-      return -diff;
-    }
-    return diff;
-  }
-  
-  function sort_highestFirst(a, b) {
-    var diff = b.initVal - a.initVal
-    if(diff == 0) {
-      return Math.random() < 0.5 ? -1 : 1;
-    }
-    return diff;
-  }
-  
-  function sort_highestFirstNegFlip(a, b) {
-    a = a.initVal;
-    b = b.initVal;
-  
-    var diff = b - a;
-    if(diff == 0) {
-      return Math.random() < 0.5 ? -1 : 1;
-    }
-  
-    if (a < 0 && b < 0) {
-      return -diff;
-    }
-    return diff;
-  }
-  
-  function addUnit(name, roll) {
-    if(name === undefined || roll === undefined) throw 'Both a Name and Initiative Roll are required.';
-    if(Number.isNaN(roll)) throw 'Initiative Roll must be an integer.';
-  
-    var player = {
-      'name': name,
-      'initVal': roll
-    };
-    initiative_table.push(player);
-  
-    //sort initiative_table
-    initiative_table.sort(sort_highestFirstNegFlip);
-  }
-  
-  function removeUnit(rank) {
-    if(rank === undefined || Number.isNaN(rank)) throw 'An integer Rank is required.';
-    if(rank <= 0 || rank > initiative_table.length) throw 'Invalid unit specified. Rank out of bounds.';
-  
-    return initiative_table.splice(rank-1, 1);
-  }
-  
-  function switchUnits(rank1, rank2) {
-    if(rank1 === undefined || rank2 === undefined) throw 'Two Ranks are required.';
-    if(Number.isNaN(rank1) || Number.isNaN(rank2)) throw 'Ranks must be integers.';
-    if(rank1 <= 0 || rank1 > initiative_table.length) throw 'Invalid first unit specified. Rank out of bounds.';
-    if(rank2 <= 0 || rank2 > initiative_table.length) throw 'Invalid second unit specified. Rank out of bounds.';
-  
-    var temp = initiative_table[rank1 - 1];
-    initiative_table[rank1 - 1] = initiative_table[rank2 - 1];
-    initiative_table[rank2 - 1] = temp;
-  }
-  
-  function nameUnit(rank, name) {
-    if(rank === undefined || name === undefined) throw 'Both a Rank and Name are required.';
-    if(Number.isNaN(rank)) throw 'Rank must be an integer.';
-    if(rank <= 0 || rank > initiative_table.length) throw 'Invalid unit specified. Rank out of bounds.';
-  
-    initiative_table[rank - 1].name = name;
-  }
-  
-  function format_order() {
-    if(initiative_table.length < 1) throw 'Initiative Order is Empty.';
-  
-    var embed = new Discord.RichEmbed();
-  
-    //TODO: Differentiate between PC/NPC or Party/Enemies?
-  
-    order_text = '';
-    for (var i = 0; i < initiative_table.length; i++) {
-      var rank = i+1;
-      order_text += rank + ': **' + initiative_table[i].name + '** (' + initiative_table[i].initVal + ')\n';
-    }
-  
-    embed.addField('Initiative Order', order_text);
-  
-    return embed;
-  }
-  
-  function deleteMessage(message) {
-    message.delete().catch((e) => {
-      console.log(e);
-    });
-  }
-  
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-  
-  function sendTempMessage(text, channel) {
-    channel.send(text)
-      .then((message) => {
-        delayedDelete(message, 4);
-      });
-  }
-  
-  async function delayedDelete(message, ms) {
-    await sleep(ms);
-    deleteMessage(message);
-  }
-  
+  const COLOR_GAMEOVER = 0xdd33ee;
+
+  // cache for channel_id to fechtId!
+  const CHANNELS_FECHT = {};
+
   client.on("ready", () => {
-    console.log("Initiative bot Online!");
+    console.log("FechtBot Online!");
   });
+
+  function getHeaderRenderOfFecht(f) {
+    var phasesVal;
+    if (!f || !f.phases || f.phases.length === 0) {
+      phasesVal = "---";
+    } else {
+      phasesVal = f.phases.map((f, i)=> { 
+        return (i+1)+". "+(f.name ? f.name : "Phase "+(i+1));
+      }).join("\n");
+    }
+
+    return new Discord.RichEmbed({ 
+        "title": "=== A New Fecht has Begun! ===",
+        "fields": [
+          {
+            "name": "Phases",
+            "value": phasesVal
+          }
+        ]
+      });
+    }
+
+  function getBodyRenderOfFecht(f) {
+   var embed = new Discord.RichEmbed();
+   var i;
+   var len;
+
+   len = f.sides.length;
+   for (i =0; i< len; i++) {
+    embed.addField(f.sides[i], "..", true);
+   }
+
+   return embed;
+  }
+
   
   client.on("message", (message) => {
-    if (message.author.bot) return;
-    
+    console.log(message.content);
+    if (message.author.bot) {
+      return;
+    }
+
     if (message.content.startsWith(PREFIX)) {
-      console.log("..Message Received: " + message.content);
-     
-      var args = message.content.split(' ');
-      var command = args.shift().substring(1).toLowerCase(); //First argument is always the command. Strip the '$'
+      var contentIndex = message.content.indexOf(" ");
+      var command = contentIndex >= 0 ? message.content.slice(1, contentIndex) : message.content.slice(1);
+      var remainingContents = contentIndex>=0 ? message.content.slice(contentIndex+1) : null;
       var channel = message.channel;
-  
-      switch(command) {
-        case 'roll':
-         // message.author.send("A");
-         // message.reply("Your edited roll was invalid. Your message wasn't updated.");
-        break;
-        case 'add':
-          try {
-            let name = args.slice(0, args.length - 1).join(' ');
-            addUnit(name, args[args.length-1]);
-            sendTempMessage("Added " + name + " to the initiative order.", channel);
-          } catch (e) {
-            console.log(e);
-            message.author.send(e); //This needs to be changed eventually
-          }
-          deleteMessage(message);
-          break;
-        case 'remove':
-          try {
-            let unit = removeUnit(args[0]);
-            sendTempMessage("Removed " + unit[0].name + " from the initiative order.", channel);
-          } catch (e) {
-            console.log(e);
-            message.author.send(e);
-          }
-          deleteMessage(message);
-          break;
-        case 'switch':
-          try {
-            switchUnits(args[0], args[1]);
-            sendTempMessage("Unit order switched.", channel);
-          } catch (e) {
-            console.log(e);
-            message.author.send(e);
-          }
-          deleteMessage(message);
-          break;
-        case 'name':
-          try {
-            nameUnit(args[0], args.slice(1).join(' '));
-            sendTempMessage("Unit renamed.", channel);
-          } catch (e) {
-            console.log(e);
-            message.author.send(e);
-          }
-          deleteMessage(message);
-          break;
-        case 'order':
-          try {
-            message.channel.send(format_order());
-          } catch(e) {
-            console.log(e);
-            message.author.send(e);
-          }
-          deleteMessage(message);
-          break;
-        case 'reset':
-          initiative_table = [];
-          deleteMessage(message);
-          break;
+     
+      if (CHANNELS_FECHT[channel.id] !== undefined) {
+        if (!CHANNELS_FECHT[channel.id]) return;
+      } else {
+        if (command === "fechtstart") {
+          message.delete();
+          Fecht.findOne({channel_id: channel.id}, "_id").then((f)=> {
+            if (f) {
+             sendTempMessage("Fecht is already in progress for this channel...", channel);
+            } else {
+             
+             channel.send(getHeaderRenderOfFecht()).then((m1)=> {
+              channel.send(new Discord.RichEmbed({description:"..."})).then((m2)=> {
+                channel.send(new Discord.RichEmbed({description:"Preparing fecht...Please wait.."})).then((m3)=> {
+                  var fecht = new Fecht();
+                  Fecht.create({
+                    channel_id: channel.id,
+                    pin_header_id: m1.id,
+                    latest_footer_id: m3.id,
+                    latest_body_id: m2.id,
+                    json: '{}',
+                    sides: ['Side A', 'Side B'],
+                  }, (err, f)=> {
+                    if (err) return;
+                    console.log("Ready fecht:"+f._id)
+                    CHANNELS_FECHT[channel.id] = f._id;
+                    m3.edit(new Discord.RichEmbed({description:"Fecht has begun!"}));
+                    m2.edit(getBodyRenderOfFecht(f));
+                    //m1.pin();
+                  });
+                })
+              });
+              });
+            }
+            
+          });
+
+          return;
+        }
       }
   
+      switch(command) {
+        case "fechtstart":
+          message.delete();
+          sendTempMessage("Fecht is already in progress for this channel...", channel);
+         break;
+        case "fechtend":
+          message.delete();
+          delete CHANNELS_FECHT[channel.id];
+          Fecht.deleteOne({channel_id: channel.id}).then((s)=> {
+            if (s && s.deletedCount > 0) {
+              channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
+            } else  sendTempMessage("There is no fecht currently in progress.", channel);
+          });
+        break;
+        case 'phase': // test single phase setting
+          message.delete();
+          if (!remainingContents) {
+            sendTempMessage("Specify Phase JSON to test..", channel);
+            return;
+          }
+          try {
+            var parsedJSON = JSON.parse(remainingContents);
+          }
+          catch( err) {
+             sendTempMessage("Failed to parse Phase JSON for test", channel);
+             return;
+          }
+          Fecht.findOneAndUpdate({channel_id: channel.id}, {phases:[parsedJSON]}, {new:true}).then((f)=> {
+            if (f) {
+             channel.fetchMessage(f.pin_header_id).then((m)=> { m.edit(getHeaderRenderOfFecht(f)) });
+            } else {
+              console.log("Failed to update phases for fecht");
+            }
+            
+          });
+        break;
+        case 'turn': // test single turn for phase
+         
+        break;
+        default:
+
+       break;
+      }
+  
+    } else {  // plain text message, should clean up?
+      var channel = message.channel;
+      if (CHANNELS_FECHT[channel.id] !== undefined) {
+        if (!CHANNELS_FECHT[channel.id]) return;
+      }
+
     }
   });
   

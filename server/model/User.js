@@ -5,7 +5,7 @@ const Schema = mongoose.Schema;
 const UserSchema = new Schema(
     {
        user_id: {
-           type: Number,
+           type: String,
            required: true
        },
        fecht: {

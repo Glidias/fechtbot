@@ -13,6 +13,10 @@ const CharacterStateSchema = new Schema(
             required: true,
             ref: 'Fecht'
         },
+        dead: {
+            type: Number,
+            default: 0
+        },
         side: {
             type: Number,
             default: 0

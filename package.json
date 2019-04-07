@@ -6,7 +6,8 @@
 	"author": "Glidias",
 	"scripts": {
 		"start": "node bot.js",
-		"devstart": "nodemon bot.js"
+		"devstart": "nodemon bot.js",
+		"seed": "node server/tests/seed/seed.js"
 	},
 	"dependencies": {
 		"dice-typescript": "^1.6.1",
