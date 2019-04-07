@@ -57,9 +57,19 @@ if (process.env.NODE_ENV !== 'production') {
    return embed;
   }
 
+  client.on("messageReactionAdd", (messageReaction, user) => {
+    if (user.bot) {
+      return;
+    }
+    // remove reactions on messages from users that aren't mentioned in turn
+    //if (messageReaction.remove(user));
+  });
+  
+  client.on("messageUpdate", (oldMessage, newMessage) => {
+
+  });
   
   client.on("message", (message) => {
-    console.log(message.content);
     if (message.author.bot) {
       return;
     }
