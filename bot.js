@@ -201,7 +201,7 @@ if (process.env.NODE_ENV !== 'production') {
             }
           }));
           */
-          message.edit(namer + dmNotify);
+          message.edit(namer + " " + dmNotify);
         } else {
           messageReaction.remove(user);
         }
