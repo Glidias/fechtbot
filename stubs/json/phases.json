@@ -4,10 +4,12 @@
     "name": "Declare Orientations",
     "initVal": 1,
     "reactOnly": 1,
-    "reacts": ["�", "�", "�"],
-    "dmReacts": ["�", "�", "�"],
+    "reacts": ["😡", "😯", "😷"],
+    "dmReacts": ["😡", "😯", "😷"],
     "reactsM": ["!r NOT Aggressive", "!r NOT Cautious", "!r NOT Defensive"], 
-    "dmReactsM": ["!r Aggressive", "!r Cautious", "!r Defensive"]
+    "dmReactsM": ["!r Aggressive", "!r Cautious", "!r Defensive"],
+    "reactsD": "please choose: NOT (Aggressive/Cautious/Defensive)",
+    "dmReactsD": "please choose: (Aggressive/Cautious/Defensive)"
 }
 
 ]

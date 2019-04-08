@@ -75,6 +75,16 @@ const FechtSchema = new Schema(
                 type: String,
                 trim: true,
                 default: ""
+            }],
+            reactsD: [{
+                type: String,
+                trim: true,
+                default: ""
+            }],
+            dmReactsD: [{
+                type: String,
+                trim: true,
+                default: ""
             }]
         }],
         /*
