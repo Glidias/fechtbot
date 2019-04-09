@@ -8,10 +8,16 @@ const UserSchema = new Schema(
            type: String,
            required: true
        },
-       fecht: {
+        channel_id: {
+            type: String,
+            required: true
+        }
+        /*
+        fecht: {
             type: Schema.Types.ObjectId,
             ref: 'Fecht'
-        }
+        },
+        */
     }
 );
 

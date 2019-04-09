@@ -14,6 +14,13 @@ function sendTempMessage(text, channel) {
     });
 }
 
+function sendTempMessageDM(text, user) {
+    user.send(text)
+    .then((message) => {
+    delayedDelete(message, 4000);
+    });
+}
+
 /*
 function sendTempNotification(text, channel) {
     channel.fetchMessages({ limit: 1 }).then(messages => {
@@ -33,6 +40,7 @@ deleteMessage(message);
 module.exports = {
     sleep: sleep,
     sendTempMessage: sendTempMessage,
+    sendTempMessageDM: sendTempMessageDM,
     delayedDelete: delayedDelete,
     deleteMessage: deleteMessage
    // sendTempNotification: sendTempNotification

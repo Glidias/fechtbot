@@ -5,6 +5,7 @@ const { User } = require('../../model/User');
 const { Character } = require('../../model/Character');
 const { CharacterState } = require('../../model/CharacterState');
 const { Manuever } = require('../../model/Manuever');
+const { DMReact } = require('../../model/DMReact');
 
 const slugify = require('slugify');
 

@@ -12,8 +12,10 @@ if (process.env.NODE_ENV !== 'production') {
   const Discord = require('discord.js');
   const client = new Discord.Client();
 
-  const { Fecht } = require('./server/model/Fecht')
-  const {sendTempMessage} = require('./server/modules/general');
+  const { Fecht } = require('./server/model/Fecht');
+  const { User } = require('./server/model/User');
+  const { DMReact } = require('./server/model/DMReact');
+  const {sendTempMessage, sendTempMessageDM} = require('./server/modules/general');
 
   const PREFIX = process.env.PREFIX;
   const COLOR_GAMEOVER = 0xdd33ee;
@@ -67,22 +69,36 @@ if (process.env.NODE_ENV !== 'production') {
    return embed;
   }
 
-  function runOnlyIfGotFecht(channel, method) {
-     // check channel 
-     if (CHANNELS_FECHT[channel.id] !== undefined) {
-      if (!CHANNELS_FECHT[channel.id]) return false;
+  async function runOnlyIfGotFecht(channel, user, method, projection) {
+
+     if (!projection) projection = "_id";
+
+     var channelId = channel.id;
+     if (channel.type === "dm") {
+       // get related channel id first
+       let u = await User.findOne({user_id:user.id});
+       if (u) {
+        channelId = u.channel_id;
+       } else {
+         console.log("Failed to find fecht...DM channel");
+         return false;
+       }
+     }
+
+     if (CHANNELS_FECHT[channelId] !== undefined) {
+      if (!CHANNELS_FECHT[channelId]) return false;
       else {
         method();
         return true;
       }
     } else {
-      Fecht.findOne({channel_id: channel.id}, "_id").then((f)=> {
+      Fecht.findOne({channel_id: channelId}, projection).then((f)=> {
         if (f) {
-          CHANNELS_FECHT[channel.id] = f._id;
-          method();
+          CHANNELS_FECHT[channelId] = f._id;
+          method(f);
           return true;
         } else {
-          CHANNELS_FECHT[channel.id] = null;  
+          CHANNELS_FECHT[channelId] = null;  
           return false;
         }
       });
@@ -90,38 +106,130 @@ if (process.env.NODE_ENV !== 'production') {
     return false;
   }
 
+  async function cleanupChannel(channel, fid, condition, method) {
+    let last = fid;
+    while( true) {
+      let c = await channel.fetchMessages({ after:last });
+      if (!c || !c.size) break;
+
+      last = c.last().id;
+
+      if (condition) c = c.filter(condition);
+      if (!c.size) continue;
+      if (method) {
+        c.tap(method);
+      } else {
+        c.deleteAll();
+      }
+   }
+  }
+
 
   client.on('raw', async packet => {
     // We don't want this to run on unrelated packets
     if (!['MESSAGE_REACTION_ADD', 'MESSAGE_REACTION_REMOVE'].includes(packet.t)) return;
     // Grab the channel to check the message from
-    const channel = client.channels.get(packet.d.channel_id);
+    var channel = client.channels.get(packet.d.channel_id);
+    let succeeded = true;
+    if (!channel) {
+     
+      succeeded = false;
+      let u = await User.findOne({user_id:packet.d.user_id});
+       if (u) {
+         channel = client.channels.get(u.channel_id);
+         if (!channel) {
+          console.log("Failed to find fecht by user id:"+packet.d.user_id+"...DM channel");
+          return false;
+         }
+       } else {
+         console.log("Failed to find fecht...DM channel");
+         return false;
+       }
+    } 
+
+   
     // There's no need to emit if the message is cached, because the event will fire anyway for that
     if (channel.messages.has(packet.d.message_id)) return;
     
     // check channel
-    /*
+    ///*
     if (CHANNELS_FECHT[channel.id] !== undefined) {
       if (!CHANNELS_FECHT[channel.id]) return;
-     
     } else {
       let f = await Fecht.findOne({channel_id: channel.id}, "_id");
       if (f) {
         CHANNELS_FECHT[channel.id] = f._id;
-      
-        
       } else {
         CHANNELS_FECHT[channel.id] = null;  
         return;
       }
     }
-    */
+
+    if (!succeeded) { // need to emulate private DM message reaction
+
+      //console.log(client.users.get(packet.d.user_id));
+      // but with the inability to receieve back old DM messages upon reconneting...lol..
+      //let reaction = new Discord.MessageReaction()
+      //client.emit('messageReactionAdd', reaction, client.users.get(packet.d.user_id));
+      //onsole.log(packet.d);
+      //new Discord.Reaction
+      /*
+       d:
+     { user_id: '327723768883576843',
+     message_id: '565102244677156867',
+     emoji: { name: '�', id: null, animated: false },
+     channel_id: '562587185015160835' } }
+     */
+      if (packet.t === "MESSAGE_REACTION_ADD") {
+        let u = await DMReact.findOne({user_id:packet.d.user_id, message_id:packet.d.message_id});
+        let userR = client.users.get(packet.d.user_id);
+          if (u) {
+            if (u.result) {
+              
+              if (userR) sendTempMessageDM("You've already reacted! Can't re-submit!", userR);
+              return;
+            } else {
+              let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount");
+              if (!f) {
+                sendTempMessageDM("The reaction is expired! Can't find fecht channel!", userR);
+                return;
+              }
+              let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
+              let symbol = packet.d.emoji.name;
+              let reactId = phase.dmReacts.indexOf(symbol);
+              if (reactId < 0) {
+                console.log("!succeeded: Failed to get react Idx");
+                return;
+              }
+              let dmNotify =  phase.dmReacts && phase.dmReacts[reactId] ? phase.dmReactsM[reactId] : "reacted.";
+              let namer =  u.content.match(new RegExp(CHAR_NAME_REGSTR, "g"))[0];
+              let charHandle = namer.split(":")[1];
+              if (!charHandle) charHandle = "";
+              else charHandle = ": "+charHandle;
+              
+              await DMReact.updateOne({user_id:userR.id, message_id:packet.d.message_id}, {
+                result: dmNotify
+              });  
+              userR.send(namer + " " + dmNotify + "\n(fecht: *"+u.channel_id+"*) <#"+u.channel_id+"> "+ "<--");
     
+            }
+          } else {
+            sendTempMessageDM("The reaction is expired! Can't find fecht channel!", userR);
+            return;
+          }
+
+        }
+
+
+      return;
+    } 
+    
+    //*/
     channel.fetchMessage(packet.d.message_id).then(message => {
       // Emojis can have identifiers of name:id format, so we have to account for that case as well
-      const emoji = packet.d.emoji.id ? `${packet.d.emoji.name}:${packet.d.emoji.id}` : packet.d.emoji.name;
+      let emoji = packet.d.emoji.id ? `${packet.d.emoji.name}:${packet.d.emoji.id}` : packet.d.emoji.name;
       // This gives us the reaction we need to emit the event properly, in top of the message object
-      const reaction = message.reactions.get(emoji);
+      let reaction = message.reactions.get(emoji);
       // Adds the currently reacting user to the reaction's users collection.
       if (reaction) reaction.users.set(packet.d.user_id, client.users.get(packet.d.user_id));
       // Check which type of event it is before emitting
@@ -149,50 +257,73 @@ if (process.env.NODE_ENV !== 'production') {
     if (user.bot) {
       return;
     }
+
     // to output emojis for tracing
     //messageReaction.message.channel.send( "\\"+messageReaction.emoji.toString() );
-    
-    
-    runOnlyIfGotFecht(messageReaction.message.channel, async ()=> {
+    runOnlyIfGotFecht(messageReaction.message.channel, user, async ()=> {
       if (messageReaction.message.author.id !== client.user.id) {
         return;
       }
-      
       if (messageReaction.message.embeds[0] && messageReaction.message.embeds[0].title === TITLES.turnFor) {
         var matches = messageReaction.message.embeds[0].description.match(new RegExp(CHAR_NAME_REGSTR, "g"));
       } else {  // currently assumed is react in Public tset,,, subjected to change
         if (messageReaction.message.mentions.users.get(user.id)) {
-          let member = messageReaction.message.mentions.members.first();
-          let reactId = messageReaction.emoji.identifier;
-          reactId = messageReaction.message.reactions.array().findIndex((r)=>{return r.emoji.identifier === reactId});
-          if (reactId <0) {
-            console.log("Failed to get react index!");
-            return;
-          }
+
           let channel = messageReaction.message.channel;
+          let nonDm = channel.type !== "dm";
+
+          if (!nonDm) {
+            let u = await DMReact.findOne({user_id:user.id, message_id:messageReaction.message.id});
+            if (u) {
+              if (u.result) {
+                sendTempMessage("You've already reacted! Can't re-submit!", channel)
+                return;
+              }
+              channel = client.channels.get(u.channel_id);
+              if (!channel) {
+                console.log("messageReactionAdd:: Failed to find channel by channel id:"+u.channel_id);
+                return;
+              }
+            } else {
+              sendTempMessage("The reaction is expired! Can't find fecht channel!", channel);
+              return;
+            }
+          }
+
+          let symbol = messageReaction.emoji.name;
+          let member = nonDm ? messageReaction.message.mentions.members.first() : null;
           
-          let message = await messageReaction.message.clearReactions();
           
-          let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount reactsM dmReacts dmReactsD");
-         
+          let message;
+          
+          if (nonDm) message = await messageReaction.message.clearReactions();
+          else message = messageReaction.message;
+          
+          let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount");
+
+
           if (!f.phases || !f.phases.length) {
             console.log("No phases problem!");
             return;
           }
           let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
-          //console.log(reactId);
-          let dmNotify =  phase.reactsM && phase.reactsM[reactId] ? phase.reactsM[reactId] : " requested DM.";
-          /*
-          if (phase.dmReacts) {
-            dmNotify += (dmNotify ? "\n" : "") + "Please check your direct messages from me for"+ (false ? ": "+ phase.dmReactsD :  " more...(wip todo)\n...");
+
+          
+          let tokenR = nonDm ? "reacts" : "dmReacts";
+          let reactId = phase[tokenR].indexOf(symbol);
+          if (reactId < 0) {
+            console.log("Failed to get react Idx");
+            return;
           }
-          */
-          //message.edit(message.content.match(new RegExp(CHAR_NAME_REGSTR, "g"))[0]+" -> "+dmNotify);
+
+          let tokenM = nonDm ? "reactsM" : "dmReactsM";
+          let dmNotify =  phase[tokenM] && phase[tokenM][reactId] ? phase[tokenM][reactId] : (nonDm ? " requested DM." : "reacted.");
           let namer =  message.content.match(new RegExp(CHAR_NAME_REGSTR, "g"))[0];
           let charHandle = namer.split(":")[1];
           if (!charHandle) charHandle = "";
           else charHandle = ": "+charHandle;
-          /*
+
+          /* // member display only works in Non direct message..
           message.edit(new Discord.RichEmbed({
             "description": dmNotify, //remainingContents[remainingContents.length-1]
             "author": {
@@ -201,18 +332,45 @@ if (process.env.NODE_ENV !== 'production') {
             }
           }));
           */
-          message.edit(namer + " " + dmNotify);
+
+          //message.edit(namer + " " + dmNotify);  
+          if (nonDm) message.edit(namer + " " + dmNotify );
+          else {
+            await DMReact.updateOne({user_id:user.id, message_id:message.id}, {
+              result: dmNotify
+            });  // , {upsert: true, setDefaultsOnInsert: true}
+            message.reply(namer + " " + dmNotify + "\n(fecht: *"+channel.id+"*) <#"+channel.id+"> "+ "<--");
+          }
+         
+          if (nonDm && phase.dmReacts) {
+            await User.updateOne({channel_id:channel.id, user_id:user.id}, {
+              channel_id: channel.id,
+              user_id: user.id
+            }, {upsert: true, setDefaultsOnInsert: true});
+            let m2 = await member.send(namer + (phase.dmReactsD ? " "+phase.dmReactsD : " reacts with:") + "\n(fecht: *"+channel.id+"*)");
+
+            await DMReact.create({
+              channel_id: channel.id,
+              user_id: user.id,
+              message_id: m2.id,
+              content: m2.content
+            });
+
+            let k;
+            
+            for (k=0; k < phase.dmReacts.length; k++) {
+              if (phase.dmReacts[k] !== symbol) {
+                await m2.react(phase.dmReacts[k]);
+              }
+            }
+          }
+         
         } else {
           messageReaction.remove(user);
         }
       }
     });
-   
-    //console.log( messageReaction.message.embeds[0]);
-    //if (messageReact.channel.la)
-    
-    // remove reactions on messages from users that aren't mentioned in turn
-    //if (messageReaction.remove(user));
+
   });
   
   client.on("messageUpdate", (oldMessage, newMessage) => {
@@ -232,11 +390,18 @@ if (process.env.NODE_ENV !== 'production') {
   
       // Fecht start and ending commands
       if (command === "fechtstart" || command === "fechtend") {
+        if (channel.type === "dm") {
+          sendTempMessage("Not here dude...this is a DM channel..", channel)
+          return;
+        }
         if (command === "fechtstart") {  
           Fecht.findOne({channel_id: channel.id}, "_id").then((f)=> {
             if (f) {
+             
               if (CHANNELS_FECHT[channel.id] === undefined) CHANNELS_FECHT[channel.id] = f._id;
               sendTempMessage("Fecht is already in progress for this channel...", channel);
+
+            
             } else {
             channel.send(getHeaderRenderOfFecht()).then((m1)=> {
               channel.send(new Discord.RichEmbed({description:"..."})).then((m2)=> {
@@ -251,7 +416,6 @@ if (process.env.NODE_ENV !== 'production') {
                     sides: ['Side A', 'Side B'],
                   }, (err, f)=> {
                     if (err) return;
-                    // console.log("Ready fecht:"+f._id)
                     CHANNELS_FECHT[channel.id] = f._id;
                     m3.edit(new Discord.RichEmbed({description:"Fecht has begun!"}));
                     m2.edit(getBodyRenderOfFecht(f));
@@ -265,17 +429,43 @@ if (process.env.NODE_ENV !== 'production') {
             
           });
         } else {
+
+          let f = await Fecht.findOne({channel_id: channel.id}, "_id, latest_footer_id");
+          if (f) {
+            let fid = f.latest_footer_id;
+            await f.delete();
+            await User.deleteMany({channel_id:channel.id});
+            await DMReact.deleteMany({channel_id:channel.id});
+            channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
+            cleanupChannel(channel, fid, m=>m.author.id === client.user.id && m.reactions.size);
+          } else {
+            sendTempMessage("There is no fecht currently in progress.", channel);
+          }
+          
+          /*
           Fecht.deleteOne({channel_id: channel.id}).then((s)=> {
             if (s && s.deletedCount > 0) {
               CHANNELS_FECHT[channel.id] = null;
               channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
             } else sendTempMessage("There is no fecht currently in progress.", channel);
           });
+          */
 
-          message.delete();
-          return;
+
         }
         message.delete();
+        return;
+      }
+
+
+      
+
+
+
+      
+      if (channel.type === "dm") {
+        sendTempMessage("Not here dude...this is a DM channel..", channel)
+        return;
       }
 
 
