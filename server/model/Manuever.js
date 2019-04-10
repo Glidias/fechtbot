@@ -22,10 +22,6 @@ const ManueverSchema = new Schema(
             type: Schema.Types.ObjectId,
             required: true,
             ref: 'CharacterState'
-        },
-        updateCount: {
-            type: Number,
-            default: 0
         }
     }
 );

@@ -6,10 +6,19 @@
     "reactOnly": 1,
     "reacts": ["😡", "😯", "😷"],
     "dmReacts": ["😡", "😯", "😷"],
-    "reactsM": ["!r NOT Aggressive", "!r NOT Cautious", "!r NOT Defensive"], 
+    "reactsM": ["NOT Aggressive", "NOT Cautious", "NOT Defensive"], 
     "dmReactsM": ["!r Aggressive", "!r Cautious", "!r Defensive"],
     "reactsD": "please choose: NOT (Aggressive/Cautious/Defensive)",
     "dmReactsD": "please choose:"
+},
+
+{
+    "name": "Test ReactOnly Pub",
+    "initVal": 1,
+    "reactOnly": 1,
+    "reacts": ["😡", "😯", "😷"],
+    "reactsM": ["111", "222", "333"], 
+    "reactsD": "please choose: NOT (111/222/333)"
 }
 
 ]

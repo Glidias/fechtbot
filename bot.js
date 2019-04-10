@@ -21,7 +21,8 @@ const PREFIX = process.env.PREFIX;
 const COLOR_GAMEOVER = 0xdd33ee;
 
 const TITLES = {
-  turnFor: ":: Turn for ::"
+  turnFor: ":: Turn for ::",
+  turnEnded: ":: Turn ended ::"
 };
 
 const delayWait = (msec) => new Promise((resolve) => setTimeout(resolve, msec));
@@ -38,6 +39,7 @@ const FECHT_COMMANDS = {
 const FORWARDED_PACKETS = ["MESSAGE_REACTION_ADD", "MESSAGE_REACTION_REMOVE", "MESSAGE_UPDATE"];
 
 const CHAR_NAME_REGSTR = '(<@[0-9]+>(?:[ ]*:[ ]*[^@#,`<> ]+)?)';
+const USER_ID_REGSTR = '<@[0-9]+>';
 
 client.on("ready", () => {
   console.log("FechtBot Online!");
@@ -49,6 +51,24 @@ function errHandler(e) {
 
 function errCatcher(e) {
   console.log(e);
+}
+
+function getUserFooterMatches(message) {
+  return message.embeds[0].description.match(new RegExp(USER_ID_REGSTR, "g"));
+}
+
+async function endTurn(channel, phase, footerMessage) {
+  // todo: convert this to manuevers
+  await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
+
+  if (phase.reactOnly===2) { // also check for reacts before ending turn
+           
+  }
+  footerMessage.clearReactions();
+  footerMessage.edit(new Discord.RichEmbed({title:TITLES.turnEnded, description: "GM may resolve stored manuevers now using `!res`"}));
+
+   cleanupChannel(channel, footerMessage.id);
+  
 }
 
 async function cleanupFooter(fid, channel) {
@@ -106,19 +126,13 @@ function getBodyRenderOfFecht(f) {
 
 async function runOnlyIfGotFecht(channel, user, method, projection) {
 
+   if (channel.type === "dm") { // fecht channels are always public, filters out DM cases
+    return false;
+   }
+
    if (!projection) projection = "_id";
 
    var channelId = channel.id;
-   if (channel.type === "dm") {
-     // get related channel id first
-     let u = await User.findOne({user_id:user.id});
-     if (u) {
-      channelId = u.channel_id;
-     } else {
-       console.log("Failed to find fecht...DM channel");
-       return false;
-     }
-   }
 
    if (CHANNELS_FECHT[channelId] !== undefined) {
     if (!CHANNELS_FECHT[channelId]) return false;
@@ -154,7 +168,12 @@ async function cleanupChannel(channel, fid, condition, method) {
     if (method) {
       c.tap(method);
     } else {
-      c.deleteAll();
+      try {
+        c.deleteAll();
+      } catch(err) {
+        console.log("PROBLEM with deleteAll");
+        console.log(err);
+      }
     }
  }
 }
@@ -188,7 +207,7 @@ client.on('raw', async packet => {
        return false;
      }
   }
-
+  
   if (!succeeded || channel.type === "dm") { // need to emulate private DM message handling instead
     if (packet.t === "MESSAGE_REACTION_ADD") {  
       let u = await DMReact.findOne({user_id:packet.d.user_id, message_id:messageId});
@@ -198,7 +217,7 @@ client.on('raw', async packet => {
             if (userR) sendTempMessageDM("You've already reacted! Can't re-submit!", userR);
             return;
           } else {
-            let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount");
+            let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount latest_footer_id");
             if (!f) {
               sendTempMessageDM("The reaction is expired! Can't find fecht channel!", userR);
               return;
@@ -220,12 +239,29 @@ client.on('raw', async packet => {
               result: dmNotify
             });  
             userR.send(namer + " " + dmNotify + "\n(fecht: *"+u.channel_id+"*) <#"+u.channel_id+"> "+ "<--");
+
+            if (phase.reactOnly) {
+              let channelDem = client.channels.get(u.channel_id);
+              let ftMsg = await channelDem.fetchMessage(f.latest_footer_id);
+              if (!ftMsg) {
+                console.log("Could not find footer msg");
+                return;
+              }
+              let matches = getUserFooterMatches(ftMsg);
+              if (matches.length === await DMReact.countDocuments({result:{$ne: ""}})) {
+                if (phase.reactOnly === 2) { // check footer if turn condition is met first
+  
+                }
+                endTurn(channelDem, phase, ftMsg);
+              }
+            }
   
           }
         } else {
           sendTempMessageDM("This reaction can no longer be processed. (expired?)", userR);
           return;
         }
+        
 
       }
     return;
@@ -291,10 +327,8 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
   runOnlyIfGotFecht(messageReaction.message.channel, user, async ()=> {
 
     if (messageReaction.message.author.id !== client.user.id ) { //|| !messageReaction.users.has(client.user.id)
-      if (messageReaction.message.channel.type !== "dm") {
-        messageReaction.remove(user);
-        user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!")
-      }
+      messageReaction.remove(user);
+      user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!")
       return;
     }
 
@@ -303,31 +337,28 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
     }
 
     if (!messageReaction.users.has(client.user.id)) { //|| 
-      if (messageReaction.message.channel.type !== "dm") {
-        messageReaction.remove(user);
-        user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!");
-      }
+      messageReaction.remove(user);
+      user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!");
       return;
     }
+
+    let channel = messageReaction.message.channel;
     
     if (messageReaction.message.embeds[0] && messageReaction.message.embeds[0].title === TITLES.turnFor) {
-      var matches = messageReaction.message.embeds[0].description.match(new RegExp(CHAR_NAME_REGSTR, "g"));
+      let matches = getUserFooterMatches(messageReaction.message);
       let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount");
-      if (!f.phases || !f.phases.length) {
-        console.log("No phases problem!");
-        return;
-      }
       let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
       if (!phase) phase = {};
-      if (messageReaction.message.isMemberMentioned(user)) {
-        
-        if (phase.reactOnly===2) {
-          
+      if (matches.includes("<@"+user.id+">")) {
+        let mru = messageReaction.users.filter(u=>matches.includes("<@"+u.id+">"));
+        if (mru.size === matches.length) {
+          endTurn(channel, phase, messageReaction.message);
         }
+       
       } else {
         messageReaction.remove(user);
       }
-    } else if (messageReaction.message.channel.type !== "dm") {  // non-DM channels reactions (currently assumed reaction turn atm)
+    } else {  // (currently assumed reaction turn atm)
       if (messageReaction.message.mentions.users.get(user.id)) {
 
         let channel = messageReaction.message.channel;  
@@ -336,11 +367,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         
         let message = await messageReaction.message.clearReactions();
         
-        let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount");
-        if (!f.phases || !f.phases.length) {
-          console.log("No phases problem!");
-          return;
-        }
+        let f = await Fecht.findOne({channel_id: channel.id}, "latest_footer_id phases phaseCount");
         let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
         if (!phase) phase = {};
         if (!phase.reacts || !phase.reacts.length) return;
@@ -350,7 +377,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
           console.log("Failed to get react Idx");
           return;
         }
-        let dmNotify =  phase.reactsM && phase.reactsM[reactId] ? phase.reactsM[reactId] : " requested DM.";
+        let dmNotify =  phase.reactsM && phase.reactsM[reactId] ? phase.reactsM[reactId] : (" requested DM.");
         let namer =  message.content.match(new RegExp(CHAR_NAME_REGSTR, "g"))[0];
         let charHandle = namer.split(":")[1];
         if (!charHandle) charHandle = "";
@@ -369,8 +396,8 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         //message.edit(namer + " " + dmNotify);  
         message.edit(namer + " " + dmNotify );
        
-        if (phase.dmReacts) {
-          await User.updateOne({channel_id:channel.id, user_id:user.id}, {
+        if (phase.dmReacts && phase.dmReacts.length) {
+          await User.updateOne({user_id:user.id}, {
             channel_id: channel.id,
             user_id: user.id
           }, {upsert: true, setDefaultsOnInsert: true});
@@ -382,18 +409,47 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
             channel_id: channel.id,
             user_id: user.id,
             message_id: m2.id,
+            result: "",
             content: m2.content
           });
 
           let k;
         
-         
           for (k=0; k < phase.dmReacts.length; k++) {
             if (phase.dmReacts[k] !== symbol) {
               await m2.react(phase.dmReacts[k]).catch(errHandler);
             }
           }
           
+        } else {
+          await User.updateOne({user_id:user.id}, {
+            channel_id: channel.id,
+            user_id: user.id
+          }, {upsert: true, setDefaultsOnInsert: true});
+
+          await DMReact.create({
+            channel_id: channel.id,
+            user_id: user.id,
+            message_id: "-",
+            result: "-",
+            content: "-"
+          });
+
+          if (phase.reactOnly) {
+            let ftMsg = await channel.fetchMessage(f.latest_footer_id);
+           
+            if (!ftMsg) {
+              console.log("Could not find footer msg");
+              return;
+            }
+            let matches = getUserFooterMatches(ftMsg);
+            if (matches.length === await DMReact.countDocuments()) {
+              if (phase.reactOnly === 2) { // check footer if turn condition is met first
+
+              }
+              endTurn(channel, phase, ftMsg);
+            }
+          }
         }
       } else {
         messageReaction.remove(user);
@@ -458,14 +514,15 @@ client.on("message", async (message) => {
           }
           
         });
-      } else {
+      } else {  // fetchend
         let f = await Fecht.findOne({channel_id: channel.id}, "_id latest_footer_id");
         if (f) {
           let fid = f.latest_footer_id;
-          await f.delete();
-          await User.deleteMany({channel_id:channel.id});
-          await DMReact.deleteMany({channel_id:channel.id});
-          channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
+          await f.delete().catch(errHandler);
+          await User.deleteMany({channel_id:channel.id}).catch(errHandler);
+          await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
+          await channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
+          CHANNELS_FECHT[f._id] = null;
           cleanupFooter(fid, channel);
           cleanupChannel(channel, fid, m=>m.author.id === client.user.id && m.reactions.size);
         } else {
@@ -480,8 +537,6 @@ client.on("message", async (message) => {
           } else sendTempMessage("There is no fecht currently in progress.", channel);
         });
         */
-
-
       }
       message.delete();
       return;
@@ -566,17 +621,23 @@ client.on("message", async (message) => {
           }
 
           let f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id");
+
           let m = await channel.fetchMessage(f.latest_footer_id);
           let phase = f.phases ? f.phases[0] || {} : {};
-          let gotTurnTick = !phase || (phase && !phase.reactOnly);
+          let gotTurnTick = phase.reactOnly !== 1;
           await m.edit(new Discord.RichEmbed({title:TITLES.turnFor, description:abc.join(", ") + (gotTurnTick ? "\nPlease respond with the reaction icon below to finalise your turn." : "")}));
           if (gotTurnTick) {
             m.react("✅");
           }
 
-          if (phase.dmReacts && phase.dmReacts.length) {
-            await channel.send(new Discord.RichEmbed({description:"Check (DM) direct messages from me AFTER you've tapped your reaction down below:"}));
+          if (phase.reacts && phase.reacts.length) {
+            if (phase.dmReacts && phase.dmReacts.length) {
+              await channel.send(new Discord.RichEmbed({description:"Check (DM) direct messages from me AFTER you've tapped your reaction down below:"}));
+            } else {
+              await channel.send(new Discord.RichEmbed({description: (phase.reactOnly === 1 ? "Tap your " : "Your ")+"reactions below:"}));
+            }
           }
+
           if (phase && phase.reacts && phase.reacts.length) {
            for (i=0; i<len; i++) {
             let m2 = await channel.send(abc[i] + (phase.reactsD ? " "+phase.reactsD : " reacts with") + ":");
