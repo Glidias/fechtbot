@@ -35,17 +35,7 @@ const FECHT_COMMANDS = {
   "phase": true
 };
 
-function getKeysFromObj(obj) {
-  let arr = [];
-  let p;
-  for (p in obj) {
-    arr.push(p);
-  }
-  return arr;
-}
-
 const FORWARDED_PACKETS = ["MESSAGE_REACTION_ADD", "MESSAGE_REACTION_REMOVE", "MESSAGE_UPDATE"];
-
 
 const CHAR_NAME_REGSTR = '(<@[0-9]+>(?:[ ]*:[ ]*[^@#,`<> ]+)?)';
 
@@ -59,6 +49,22 @@ function errHandler(e) {
 
 function errCatcher(e) {
   console.log(e);
+}
+
+async function cleanupFooter(fid, channel) {
+  if (!fid) {
+    let f = await Fecht.findOne({channel_id: channelId}, "latest_footer_id");
+    if (f) {
+      fid = f.latest_footer_id;
+    } else {
+      return;
+    }
+  }
+      
+  let m = typeof fid === "string" ?  await channel.fetchMessage(fid) : fid;
+  if (m) {
+    m.clearReactions();
+  }
 }
 
 function getHeaderRenderOfFecht(f) {
@@ -217,7 +223,7 @@ client.on('raw', async packet => {
   
           }
         } else {
-          sendTempMessageDM("This (expired?) reaction can no longer be processed.", userR);
+          sendTempMessageDM("This reaction can no longer be processed. (expired?)", userR);
           return;
         }
 
@@ -227,8 +233,10 @@ client.on('raw', async packet => {
  
   // There's no need to emit if the message is cached, because the event will fire anyway for that
   if (channel.messages.has(messageId)) return;
+
   
-  // check channel
+  
+  // check channel fecht availability
   ///*
   if (CHANNELS_FECHT[channel.id] !== undefined) {
     if (!CHANNELS_FECHT[channel.id]) return;
@@ -277,15 +285,48 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
   if (user.bot) {
     return;
   }
-
+  
   // to output emojis for tracing
   //messageReaction.message.channel.send( "\\"+messageReaction.emoji.toString() );
   runOnlyIfGotFecht(messageReaction.message.channel, user, async ()=> {
-    if (messageReaction.message.author.id !== client.user.id) {
+
+    if (messageReaction.message.author.id !== client.user.id ) { //|| !messageReaction.users.has(client.user.id)
+      if (messageReaction.message.channel.type !== "dm") {
+        messageReaction.remove(user);
+        user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!")
+      }
       return;
     }
+
+    if (messageReaction.users.size < 2) {
+      messageReaction.users = await messageReaction.fetchUsers();
+    }
+
+    if (!messageReaction.users.has(client.user.id)) { //|| 
+      if (messageReaction.message.channel.type !== "dm") {
+        messageReaction.remove(user);
+        user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!");
+      }
+      return;
+    }
+    
     if (messageReaction.message.embeds[0] && messageReaction.message.embeds[0].title === TITLES.turnFor) {
       var matches = messageReaction.message.embeds[0].description.match(new RegExp(CHAR_NAME_REGSTR, "g"));
+      let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount");
+      if (!f.phases || !f.phases.length) {
+        console.log("No phases problem!");
+        return;
+      }
+      let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
+      if (!phase) phase = {};
+      if (messageReaction.message.isMemberMentioned(user)) {
+        
+        if (phase.reactOnly===2) {
+          
+        }
+      } else {
+        messageReaction.remove(user);
+      }
     } else if (messageReaction.message.channel.type !== "dm") {  // non-DM channels reactions (currently assumed reaction turn atm)
       if (messageReaction.message.mentions.users.get(user.id)) {
 
@@ -362,7 +403,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
 
 });
 
-client.on("messageUpdate", (oldMessage, message) => {
+client.on("messageUpdate", (oldMessage, message) => { // oldMessage might be null for uncached messages
   // console.log(message.content);
 });
 
@@ -418,15 +459,15 @@ client.on("message", async (message) => {
           
         });
       } else {
-
-        let f = await Fecht.findOne({channel_id: channel.id}, "_id, latest_footer_id");
+        let f = await Fecht.findOne({channel_id: channel.id}, "_id latest_footer_id");
         if (f) {
           let fid = f.latest_footer_id;
           await f.delete();
           await User.deleteMany({channel_id:channel.id});
           await DMReact.deleteMany({channel_id:channel.id});
           channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
-            cleanupChannel(channel, fid, m=>m.author.id === client.user.id && m.reactions.size);
+          cleanupFooter(fid, channel);
+          cleanupChannel(channel, fid, m=>m.author.id === client.user.id && m.reactions.size);
         } else {
           sendTempMessage("There is no fecht currently in progress.", channel);
         }
@@ -499,7 +540,7 @@ client.on("message", async (message) => {
         }));
       break;
       case 'r':
-
+      case 'rp':
       return;
       case 'turn': // test single turn for phase atm
         if (message.mentions.users.size) {
