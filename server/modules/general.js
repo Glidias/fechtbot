@@ -21,6 +21,7 @@ function sendTempMessageDM(text, user) {
     });
 }
 
+
 /*
 function sendTempNotification(text, channel) {
     channel.fetchMessages({ limit: 1 }).then(messages => {
@@ -33,9 +34,9 @@ function sendTempNotification(text, channel) {
 */
 
 async function delayedDelete(message, ms) {
-await sleep(ms);
-deleteMessage(message);
-}
+    await sleep(ms);
+    deleteMessage(message);
+    }
 
 module.exports = {
     sleep: sleep,

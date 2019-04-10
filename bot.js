@@ -67,8 +67,12 @@ async function endTurn(channel, phase, footerMessage) {
   footerMessage.clearReactions();
   footerMessage.edit(new Discord.RichEmbed({title:TITLES.turnEnded, description: "GM may resolve stored manuevers now using `!res`"}));
 
-   cleanupChannel(channel, footerMessage.id);
+   await cleanupChannel(channel, footerMessage.id);
   
+}
+
+function getCurrentPhase(f) {
+  return f.phases ? f.phases[f.phaseCount ? f.phaseCount - 1 : 0] || {} : {};
 }
 
 async function cleanupFooter(fid, channel) {
@@ -159,23 +163,21 @@ async function cleanupChannel(channel, fid, condition, method) {
   let last = fid;
   while( true) {
     let c = await channel.fetchMessages({ after:last });
-    if (!c || !c.size) break;
-
-    last = c.last().id;
-
+    if (!c || !c.size) {
+      break;
+    }
+    last = c.first().id;
     if (condition) c = c.filter(condition);
     if (!c.size) continue;
     if (method) {
       c.tap(method);
     } else {
-      try {
-        c.deleteAll();
-      } catch(err) {
-        console.log("PROBLEM with deleteAll");
-        console.log(err);
-      }
+      await c.deleteAll();
     }
+
+   // break;  
  }
+
 }
 
 
@@ -253,6 +255,7 @@ client.on('raw', async packet => {
   
                 }
                 endTurn(channelDem, phase, ftMsg);
+                return;
               }
             }
   
@@ -353,6 +356,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         let mru = messageReaction.users.filter(u=>matches.includes("<@"+u.id+">"));
         if (mru.size === matches.length) {
           endTurn(channel, phase, messageReaction.message);
+          return;
         }
        
       } else {
@@ -448,6 +452,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
 
               }
               endTurn(channel, phase, ftMsg);
+              return;
             }
           }
         }
@@ -523,8 +528,9 @@ client.on("message", async (message) => {
           await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
           await channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
           CHANNELS_FECHT[f._id] = null;
-          cleanupFooter(fid, channel);
-          cleanupChannel(channel, fid, m=>m.author.id === client.user.id && m.reactions.size);
+          await cleanupFooter(fid, channel);
+          await cleanupChannel(channel, fid, m=>m.author.id === client.user.id && m.reactions.size);
+          return;
         } else {
           sendTempMessage("There is no fecht currently in progress.", channel);
         }
@@ -584,6 +590,13 @@ client.on("message", async (message) => {
             console.log("Failed to update phases for fecht");
           } 
         });
+      break;
+      case 'endturnall':
+        let f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id phases");
+        if (f) {
+          endTurn(channel, getCurrentPhase(f), await channel.fetchMessage(f.latest_footer_id));
+          return;
+        }
       break;
       case 'say':
         channel.send(new Discord.RichEmbed({
