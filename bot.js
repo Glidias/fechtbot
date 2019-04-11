@@ -409,7 +409,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         let charHandle = namer.split(":")[1];
         if (!charHandle) charHandle = "";
 
-        /* // member display only works in Non direct message..
+        /*
         message.edit(new Discord.RichEmbed({
           "description": dmNotify, //remainingContents[remainingContents.length-1]
           "author": {
@@ -422,7 +422,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         //message.edit(namer + " " + dmNotify);  
         message.edit(namer + " " + dmNotify );
        
-        if (phase.dmReacts && phase.dmReacts.length) {
+        if (phase.dmReacts && phase.dmReacts.length) {  // DMReacts from player required
           await User.updateOne({user_id:user.id}, {
             channel_id: channel.id,
             user_id: user.id
@@ -448,13 +448,13 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
             }
           }
           
-        } else {
+        } else {  // no DMReacts from player required
           await User.updateOne({user_id:user.id}, {
             channel_id: channel.id,
             user_id: user.id
           }, {upsert: true, setDefaultsOnInsert: true});
 
-          await DMReact.create({
+          await DMReact.create({  // create dummy DMReact with dummy - results/contents
             channel_id: channel.id,
             user_id: user.id,
             handle: charHandle,
