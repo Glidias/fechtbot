@@ -9,19 +9,42 @@ const ManueverSchema = new Schema(
             required: true,
             ref: 'Fecht'
         },
-        slot: {
-            type: Number,
+        mention: {
+            type: String,
             required: true
         },
-        msg: {
+        slot: {
+            type: Number,
+            required: true,
+            default: 0
+        },
+        label: {
             type: String,
             trim: true,
-            required: true
+            required: true,
+            default: "~"
+        },
+        roll: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+        comment: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+        replyTo: {
+            type: Schema.Types.ObjectId,
+            ref: "Manuever"
         },
         characterState: {
             type: Schema.Types.ObjectId,
-            required: true,
             ref: 'CharacterState'
+        },
+        react: {
+            type: Boolean,
+            default: false
         }
     }
 );

@@ -15,6 +15,7 @@ const client = new Discord.Client();
 const { Fecht } = require('./server/model/Fecht');
 const { User } = require('./server/model/User');
 const { DMReact } = require('./server/model/DMReact');
+const { Manuever } = require('./server/model/Manuever');
 const {sendTempMessage, sendTempMessageDM} = require('./server/modules/general');
 
 const PREFIX = process.env.PREFIX;
@@ -80,8 +81,96 @@ function getCharFooterMatches(message) {
   return matches;
 }
 
-async function endTurn(channel, phase, footerMessage) {
+function getMentionChar(userId, handle) {
+  return "<@"+userId+">:"+handle;
+}
+
+async function getManueverObj(result, rem, react, fecht, mention, charState) {
+  //replyTo
+  var spl = rem.split(":");
+  var rollSpl = spl[1] ? rollSpl[1].split("#") : null;
+
+  var obj =  {
+    fecht: fecht._id,
+    mention: mention,
+    slot: 0, // TO properly set this based on rp
+    label: spl[0],
+    roll: rollSpl ? rollSpl[0] : "",
+    comment: rollSpl && rollSpl[1] ? rollSpl[1] : "",
+    react: react
+  };
+  if (result.startsWith("!rp ")) {  // determine the replyTo objectId
+    
+  }
+  if (charState) {
+    obj.characterState = charState._id;
+  }
+  return obj;
+  /*
+   fecht: {
+            type: Schema.Types.ObjectId,
+            required: true,
+            ref: 'Fecht'
+        },
+        mention: {
+            type: String,
+            required: true
+        },
+        slot: {
+            type: Number,
+            required: true,
+            default: 0
+        },
+        label: {
+            type: String,
+            trim: true,
+            required: true,
+            default: "~"
+        },
+        roll: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+        comment: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+        replyTo: {
+            type: Schema.Types.ObjectId,
+            ref: "Manuever"
+        },
+        characterState: {
+            type: Schema.Types.ObjectId,
+            ref: 'CharacterState'
+        },
+        react: {
+            type: Boolean,
+            default: false
+        }
+        */
+
+  
+}
+
+async function endTurn(channel, phase, footerMessage, fecht) {
   // todo: convert this to manuevers
+  let allReacts = await DMReact.find({channel_id:channel.id}).catch(errHandler);
+  let i;
+  let spl;
+  let a;
+  let len = allReacts.length;
+  let rem;
+  let man;
+  for (i=0; i< len; i++) {
+    a = allReacts[i];
+    if (rem = isValidManueverMsg(a.result))  {
+      man = await Manuever.create(getManueverObj(a.result, rem, true, fecht, getMentionChar(a.user_id, a.handle), null));
+      if (man) console.log("MANuever created"+man.label);
+    }
+  }
+  
   await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
 
   if (phase.reactOnly===2) { // also check for reacts before ending turn
@@ -112,6 +201,16 @@ async function cleanupFooter(fid, channel) {
   if (m) {
     m.clearReactions();
   }
+}
+
+function isValidManueverMsg(str) {
+  return str.startsWidth("!r ") ? isValidManeverExpr(str.slice(3)) : 
+  str.startsWith("!rp ") ? isValidManeverExpr(str.slice(4)) 
+  : "";
+}
+
+function isValidManeverExpr(str) {
+  return str;
 }
 
 function getHeaderRenderOfFecht(f) {
@@ -277,7 +376,7 @@ client.on('raw', async packet => {
                 if (phase.reactOnly === 2) { // check footer if turn condition is met first
   
                 }
-                endTurn(channelDem, phase, ftMsg);
+                endTurn(channelDem, phase, ftMsg, f);
                 return;
               }
             }
@@ -378,7 +477,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
       if (matches.includes("<@"+user.id+">")) {
         let mru = messageReaction.users.filter(u=>matches.includes("<@"+u.id+">"));
         if (mru.size === matches.length) {
-          endTurn(channel, phase, messageReaction.message);
+          endTurn(channel, phase, messageReaction.message, f);
           return;
         }
        
@@ -475,7 +574,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
               if (phase.reactOnly === 2) { // check footer if turn condition is met first
 
               }
-              endTurn(channel, phase, ftMsg);
+              endTurn(channel, phase, ftMsg, f);
               return;
             }
           }
@@ -550,6 +649,7 @@ client.on("message", async (message) => {
           await f.delete().catch(errHandler);
           await User.deleteMany({channel_id:channel.id}).catch(errHandler);
           await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
+          await Manuever.deleteMany({_id:f._id}).catch(errHandler);
           await channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
           CHANNELS_FECHT[f._id] = null;
           await cleanupFooter(fid, channel);
@@ -627,7 +727,7 @@ client.on("message", async (message) => {
           return;
         }
         if (f) {
-          endTurn(channel, getCurrentPhase(f), m);
+          endTurn(channel, getCurrentPhase(f), m, f);
           return;
         }
       break;

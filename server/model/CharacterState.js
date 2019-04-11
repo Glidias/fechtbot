@@ -25,10 +25,6 @@ const CharacterStateSchema = new Schema(
             type: Number,
             default: 0
         },
-        initMask: {
-            type: Number,
-            default: 0
-        },
         character: {
             type: Schema.Types.ObjectId,
             required: true,
