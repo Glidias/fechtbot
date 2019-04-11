@@ -41,6 +41,23 @@ const FORWARDED_PACKETS = ["MESSAGE_REACTION_ADD", "MESSAGE_REACTION_REMOVE", "M
 const CHAR_NAME_REGSTR = '(<@[0-9]+>(?:[ ]*:[ ]*[^@#,`<> ]+)?)';
 const USER_ID_REGSTR = '<@[0-9]+>';
 
+function getCharNameRegMatches(contents) {
+  let matches = contents.match(new RegExp(CHAR_NAME_REGSTR, "g"));
+  let len = matches.length;
+  let i;
+  let si;
+  let str;
+  for (i=0; i<len; i++) {
+    str = matches[i];
+    si = str.indexOf(":");
+    if (si >= 0) {
+      matches[i] = str.slice(0, si).trim() + ":" + str.slice(si+1).trim();
+    }
+  }
+  matches = [...new Set(matches)];
+  return matches;
+}
+
 client.on("ready", () => {
   console.log("FechtBot Online!");
 });
@@ -54,7 +71,13 @@ function errCatcher(e) {
 }
 
 function getUserFooterMatches(message) {
-  return message.embeds[0].description.match(new RegExp(USER_ID_REGSTR, "g"));
+  let matches = message.embeds[0].description.match(new RegExp(USER_ID_REGSTR, "g"));
+  matches = [...new Set(matches)];
+  return matches;
+}
+function getCharFooterMatches(message) {
+  let matches = message.embeds[0].description.match(new RegExp(CHAR_NAME_REGSTR, "g"));
+  return matches;
 }
 
 async function endTurn(channel, phase, footerMessage) {
@@ -172,7 +195,7 @@ async function cleanupChannel(channel, fid, condition, method) {
     if (method) {
       c.tap(method);
     } else {
-      await c.deleteAll();
+      await Promise.all(c.deleteAll());
     }
 
    // break;  
@@ -249,7 +272,7 @@ client.on('raw', async packet => {
                 console.log("Could not find footer msg");
                 return;
               }
-              let matches = getUserFooterMatches(ftMsg);
+              let matches = getCharFooterMatches(ftMsg);
               if (matches.length === await DMReact.countDocuments({result:{$ne: ""}})) {
                 if (phase.reactOnly === 2) { // check footer if turn condition is met first
   
@@ -348,7 +371,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
     let channel = messageReaction.message.channel;
     
     if (messageReaction.message.embeds[0] && messageReaction.message.embeds[0].title === TITLES.turnFor) {
-      let matches = getUserFooterMatches(messageReaction.message);
+      let matches = getCharFooterMatches(messageReaction.message);
       let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount");
       let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
       if (!phase) phase = {};
@@ -385,7 +408,6 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         let namer =  message.content.match(new RegExp(CHAR_NAME_REGSTR, "g"))[0];
         let charHandle = namer.split(":")[1];
         if (!charHandle) charHandle = "";
-        else charHandle = ": "+charHandle;
 
         /* // member display only works in Non direct message..
         message.edit(new Discord.RichEmbed({
@@ -412,6 +434,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
           await DMReact.create({
             channel_id: channel.id,
             user_id: user.id,
+            handle: charHandle,
             message_id: m2.id,
             result: "",
             content: m2.content
@@ -434,6 +457,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
           await DMReact.create({
             channel_id: channel.id,
             user_id: user.id,
+            handle: charHandle,
             message_id: "-",
             result: "-",
             content: "-"
@@ -446,7 +470,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
               console.log("Could not find footer msg");
               return;
             }
-            let matches = getUserFooterMatches(ftMsg);
+            let matches = getCharFooterMatches(ftMsg);
             if (matches.length === await DMReact.countDocuments()) {
               if (phase.reactOnly === 2) { // check footer if turn condition is met first
 
@@ -569,6 +593,9 @@ client.on("message", async (message) => {
       }
     }
 
+    let f;
+    let m;
+
     // Fecht only commands
     switch(command) {
       case 'phase': // test single phase setting
@@ -591,10 +618,16 @@ client.on("message", async (message) => {
           } 
         });
       break;
+      case 'skipturnall':
       case 'endturnall':
-        let f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id phases");
+        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id phases");
+        m = await channel.fetchMessage(f.latest_footer_id);
+        if (m.embeds[0].title !== TITLES.turnFor) {
+          sendTempMessage("Turn has already ended...", channel);
+          return;
+        }
         if (f) {
-          endTurn(channel, getCurrentPhase(f), await channel.fetchMessage(f.latest_footer_id));
+          endTurn(channel, getCurrentPhase(f), m);
           return;
         }
       break;
@@ -609,6 +642,25 @@ client.on("message", async (message) => {
       break;
       case 'r':
       case 'rp':
+        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id phases");
+        m = await channel.fetchMessage(f.latest_footer_id);
+        if (m.embeds[0].title !== TITLES.turnFor) {
+          sendTempMessage("Turn has already ended...", channel);
+          message.delete();
+          return;
+        }
+        let matches = getUserFooterMatches(m);
+        if (!matches.includes("<@"+message.member.user.id+">")) {
+          sendTempMessage("<@"+message.member.user.id+"> It's not your turn yet..", channel);
+          message.delete();
+          return;
+        }
+        let phase = getCurrentPhase(f);
+        if (phase.reactOnly === 1) {
+          sendTempMessage("<@"+message.member.user.id+"> Typed manuevers not allowed in this phase", channel);
+          message.delete();
+          return;
+        }
       return;
       case 'turn': // test single turn for phase atm
         if (message.mentions.users.size) {
@@ -623,8 +675,9 @@ client.on("message", async (message) => {
             }
           }
           remainingContents = remainingContents.replace("\t", " ");
-          let regex = new RegExp(CHAR_NAME_REGSTR, 'g')
-          let abc = remainingContents.match(regex);
+          
+          let abc = getCharNameRegMatches(remainingContents);
+          
           len = abc.length; // TODO: check valid characters
           for (i=0; i< len; i++) {
             let spl = abc[i].split(":", 2);
@@ -636,6 +689,14 @@ client.on("message", async (message) => {
           let f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id");
 
           let m = await channel.fetchMessage(f.latest_footer_id);
+
+          if (m.embeds[0].title === TITLES.turnFor) {
+            //await endTurn(channel, getCurrentPhase(f), m);
+            sendTempMessage("Please end turn first. GM can force this with `!endturnall`/`!skipturnall`.", channel);
+            message.delete();
+            return;
+          }
+
           let phase = f.phases ? f.phases[0] || {} : {};
           let gotTurnTick = phase.reactOnly !== 1;
           await m.edit(new Discord.RichEmbed({title:TITLES.turnFor, description:abc.join(", ") + (gotTurnTick ? "\nPlease respond with the reaction icon below to finalise your turn." : "")}));

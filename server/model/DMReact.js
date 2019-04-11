@@ -7,7 +7,11 @@ const DMReactSchema = new Schema(
        user_id: {
            type: String,
            required: true
-       },
+	   },
+	   handle: {
+			type: String,
+			default:""
+		},
         channel_id: {
             type: String,
             required: true
