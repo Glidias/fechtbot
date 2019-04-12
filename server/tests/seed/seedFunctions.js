@@ -12,6 +12,11 @@ const slugify = require('slugify');
 const populateData = async () => {
 
     await Fecht.deleteMany({}).exec();
+    await User.deleteMany({}).exec();
+    await CharacterState.deleteMany({}).exec();
+    await Fecht.deleteMany({}).exec();
+    await Manuever.deleteMany({}).exec();
+    await DMReact.deleteMany({}).exec();
 
     /*
     if (mongoose.connection.readyState === 0) {

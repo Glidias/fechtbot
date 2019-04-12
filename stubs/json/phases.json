@@ -20,7 +20,17 @@
     "reactOnly": 1,
     "reacts": ["😡", "😯", "😷"],
     "reactsM": ["111", "222", "333"], 
-    "reactsD": "please choose: NOT (111/222/333)"
+    "reactsD": "please choose: (111/222/333)"
+}
+,
+
+{
+    "name": "Test ReactOnly Pub2",
+    "initVal": 1,
+    "reactOnly": 1,
+    "reacts": ["😡", "😯", "😷"],
+    "reactsM": ["!r Red", "!r Green", "!r Blue"], 
+    "reactsD": "please choose:"
 }
 
 ]

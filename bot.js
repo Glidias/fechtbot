@@ -23,7 +23,8 @@ const COLOR_GAMEOVER = 0xdd33ee;
 
 const TITLES = {
   turnFor: ":: Turn for ::",
-  turnEnded: ":: Turn ended ::"
+  turnEnded: ":: Turn ended ::",
+  turnEnding: ".. Ending turn .."
 };
 
 const delayWait = (msec) => new Promise((resolve) => setTimeout(resolve, msec));
@@ -82,16 +83,16 @@ function getCharFooterMatches(message) {
 }
 
 function getMentionChar(userId, handle) {
-  return "<@"+userId+">:"+handle;
+  return "<@"+userId+">"+ ( handle ? ":"+handle : "");
 }
 
-async function getManueverObj(result, rem, react, fecht, mention, charState) {
+async function getManueverObj(result, rem, react, channel, mention, charState, replyManuever) {
   //replyTo
   var spl = rem.split(":");
-  var rollSpl = spl[1] ? rollSpl[1].split("#") : null;
+  var rollSpl = spl[1] ? spl[1].split("#") : null;
 
   var obj =  {
-    fecht: fecht._id,
+    channel_id: channel.id,
     mention: mention,
     slot: 0, // TO properly set this based on rp
     label: spl[0],
@@ -99,8 +100,9 @@ async function getManueverObj(result, rem, react, fecht, mention, charState) {
     comment: rollSpl && rollSpl[1] ? rollSpl[1] : "",
     react: react
   };
-  if (result.startsWith("!rp ")) {  // determine the replyTo objectId
-    
+  
+  if (replyManuever) {  // determine the replyTo objectId
+    obj.replyTo = replyManuever.slot;
   }
   if (charState) {
     obj.characterState = charState._id;
@@ -137,10 +139,6 @@ async function getManueverObj(result, rem, react, fecht, mention, charState) {
             trim: true,
             default: ""
         },
-        replyTo: {
-            type: Schema.Types.ObjectId,
-            ref: "Manuever"
-        },
         characterState: {
             type: Schema.Types.ObjectId,
             ref: 'CharacterState'
@@ -155,6 +153,11 @@ async function getManueverObj(result, rem, react, fecht, mention, charState) {
 }
 
 async function endTurn(channel, phase, footerMessage, fecht) {
+
+  footerMessage.clearReactions();
+  let matches = getCharFooterMatches(footerMessage);
+  await footerMessage.edit(new Discord.RichEmbed({title:TITLES.turnEnded, description: "Please wait..."}));
+  
   // todo: convert this to manuevers
   let allReacts = await DMReact.find({channel_id:channel.id}).catch(errHandler);
   let i;
@@ -163,24 +166,48 @@ async function endTurn(channel, phase, footerMessage, fecht) {
   let len = allReacts.length;
   let rem;
   let man;
+  let mention;
+  let mentionHashArr = {};
+
   for (i=0; i< len; i++) {
     a = allReacts[i];
-    if (rem = isValidManueverMsg(a.result))  {
-      man = await Manuever.create(getManueverObj(a.result, rem, true, fecht, getMentionChar(a.user_id, a.handle), null));
-      if (man) console.log("MANuever created"+man.label);
+    if (!a.result) continue;
+    if (rem = await isValidManueverMsg(a.result))  {
+      mention = getMentionChar(a.user_id, a.handle);
+      if (!mentionHashArr[mention]) mentionHashArr[mention] = [];
+      man = await getManueverObj(a.result, typeof rem === "string" ? rem : rem.str, true, channel, mention, null, typeof rem !== "string" ? rem.m : null);
+      
+      mentionHashArr[mention].push(man);
     }
   }
-  
   await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
 
-  if (phase.reactOnly===2) { // also check for reacts before ending turn
-           
-  }
-  footerMessage.clearReactions();
-  footerMessage.edit(new Discord.RichEmbed({title:TITLES.turnEnded, description: "GM may resolve stored manuevers now using `!res`"}));
+  await cleanupChannel(channel, footerMessage.id);
 
-   await cleanupChannel(channel, footerMessage.id);
+  let collectArr = [];
+  let slotCount = await Manuever.countDocuments({channel_id:channel.id, replyTo:{$ne: 0}});
+  len = matches.length;
+  for (i=0; i< len; i++) {
+    a = mentionHashArr[matches[i]];
+    if (!a) continue;
+
+    a.forEach((obj)=> {
+      if (!obj.replyTo) obj.slot = ++slotCount;
+      collectArr.push(obj);
+    })
+  }
+
   
+  await Manuever.insertMany(collectArr).catch(errHandler);
+
+
+  let bd = await channel.fetchMessage(fecht.latest_body_id).catch(errHandler);
+  if (bd) {
+    let bdm = await getBodyRenderOfFecht(fecht);
+    bd.edit(bdm);
+  }
+  
+  footerMessage.edit(new Discord.RichEmbed({title:TITLES.turnEnded, description: "GM may resolve stored manuevers now using `!res`"}));
 }
 
 function getCurrentPhase(f) {
@@ -203,14 +230,27 @@ async function cleanupFooter(fid, channel) {
   }
 }
 
-function isValidManueverMsg(str) {
-  return str.startsWidth("!r ") ? isValidManeverExpr(str.slice(3)) : 
-  str.startsWith("!rp ") ? isValidManeverExpr(str.slice(4)) 
+async function isValidManueverMsg(str) {
+  return str.startsWith("!r ") ? isValidManeverExpr(str.slice(3)) : 
+  str.startsWith("!rp ") ? await isValidManeverRpExpr(str.slice(4)) 
   : "";
 }
 
 function isValidManeverExpr(str) {
   return str;
+}
+
+async function isValidManeverRpExpr(str) {
+  var si = str.indexOf(" ");
+  if (si < 0) return "";
+   var spl = str.slice(0, si);
+   var val = parseInt(spl[0]);
+   if (isNaN(val)) {
+     return "";
+   } else {
+     let m = await Manuever.findOne({slot:val});
+     if (m) return {str:str, m:m};
+   }
 }
 
 function getHeaderRenderOfFecht(f) {
@@ -237,14 +277,22 @@ function getHeaderRenderOfFecht(f) {
 
 
 
-function getBodyRenderOfFecht(f) {
+async function getBodyRenderOfFecht(f) {
  var embed = new Discord.RichEmbed();
  var i;
  var len;
+ var manuevers = await Manuever.find({});
 
  len = f.sides.length;
  for (i =0; i< len; i++) {
-  embed.addField(f.sides[i], "..", true);
+  embed.addField(f.sides[i], "- \n*empty*\n -", true);
+ }
+
+ let m;
+ len = manuevers.length;
+ for (i=0; i< len; i++) {
+  m = manuevers[i]; 
+  embed.addField(("*"+m.slot + ".* " + m.label + (m.roll ? ": "+m.roll : "") + (m.comment ? "# "+m.comment : "")), "- " + m.mention );
  }
 
  return embed;
@@ -281,23 +329,24 @@ async function runOnlyIfGotFecht(channel, user, method, projection) {
   return false;
 }
 
-async function cleanupChannel(channel, fid, condition, method) {
+async function cleanupChannel(channel, fid, condition, method, alwaysDelete) {
   let last = fid;
+  let d;
   while( true) {
     let c = await channel.fetchMessages({ after:last });
     if (!c || !c.size) {
       break;
     }
     last = c.first().id;
+    d = c;
     if (condition) c = c.filter(condition);
     if (!c.size) continue;
     if (method) {
       c.tap(method);
-    } else {
+    } else if (!alwaysDelete) {
       await Promise.all(c.deleteAll());
     }
-
-   // break;  
+    if (alwaysDelete) d.deleteAll();
  }
 
 }
@@ -341,7 +390,7 @@ client.on('raw', async packet => {
             if (userR) sendTempMessageDM("You've already reacted! Can't re-submit!", userR);
             return;
           } else {
-            let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount latest_footer_id");
+            let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount latest_footer_id latest_body_id sides");
             if (!f) {
               sendTempMessageDM("The reaction is expired! Can't find fecht channel!", userR);
               return;
@@ -372,7 +421,7 @@ client.on('raw', async packet => {
                 return;
               }
               let matches = getCharFooterMatches(ftMsg);
-              if (matches.length === await DMReact.countDocuments({result:{$ne: ""}})) {
+              if (matches.length === await DMReact.countDocuments({channel_id: u.channel_id, result:{$ne: ""}})) {
                 if (phase.reactOnly === 2) { // check footer if turn condition is met first
   
                 }
@@ -471,7 +520,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
     
     if (messageReaction.message.embeds[0] && messageReaction.message.embeds[0].title === TITLES.turnFor) {
       let matches = getCharFooterMatches(messageReaction.message);
-      let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount");
+      let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount latest_body_id sides");
       let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
       if (!phase) phase = {};
       if (matches.includes("<@"+user.id+">")) {
@@ -493,7 +542,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         
         let message = await messageReaction.message.clearReactions();
         
-        let f = await Fecht.findOne({channel_id: channel.id}, "latest_footer_id phases phaseCount");
+        let f = await Fecht.findOne({channel_id: channel.id}, "latest_footer_id latest_body_id sides phases phaseCount");
         let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
         if (!phase) phase = {};
         if (!phase.reacts || !phase.reacts.length) return;
@@ -558,7 +607,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
             user_id: user.id,
             handle: charHandle,
             message_id: "-",
-            result: "-",
+            result: phase.reactsM && phase.reactsM[reactId] ? phase.reactsM[reactId] : "-",
             content: "-"
           });
 
@@ -570,7 +619,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
               return;
             }
             let matches = getCharFooterMatches(ftMsg);
-            if (matches.length === await DMReact.countDocuments()) {
+            if (matches.length === await DMReact.countDocuments({channel_id:channel.id})) {
               if (phase.reactOnly === 2) { // check footer if turn condition is met first
 
               }
@@ -632,7 +681,10 @@ client.on("message", async (message) => {
                   if (err) return;
                   CHANNELS_FECHT[channel.id] = f._id;
                   m3.edit(new Discord.RichEmbed({description:"Fecht has begun!"}));
-                  m2.edit(getBodyRenderOfFecht(f));
+                  getBodyRenderOfFecht(f).then((bdm)=> {
+                    m2.edit(bdm);
+                  }).catch(errHandler);
+                 
                   //m1.pin();
 
                 });
@@ -643,13 +695,14 @@ client.on("message", async (message) => {
           
         });
       } else {  // fetchend
-        let f = await Fecht.findOne({channel_id: channel.id}, "_id latest_footer_id");
+        let f = await Fecht.findOne({channel_id: channel.id}, "latest_footer_id latest_body_id sides");
         if (f) {
           let fid = f.latest_footer_id;
           await f.delete().catch(errHandler);
           await User.deleteMany({channel_id:channel.id}).catch(errHandler);
           await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
-          await Manuever.deleteMany({_id:f._id}).catch(errHandler);
+          await Manuever.deleteMany({channel_id:channel.id}).catch(errHandler);
+          
           await channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
           CHANNELS_FECHT[f._id] = null;
           await cleanupFooter(fid, channel);
@@ -720,7 +773,7 @@ client.on("message", async (message) => {
       break;
       case 'skipturnall':
       case 'endturnall':
-        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id phases");
+        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id latest_body_id sides phases");
         m = await channel.fetchMessage(f.latest_footer_id);
         if (m.embeds[0].title !== TITLES.turnFor) {
           sendTempMessage("Turn has already ended...", channel);
@@ -786,7 +839,7 @@ client.on("message", async (message) => {
             abc[i] = spl.join(":");
           }
 
-          let f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id");
+          let f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id latest_body_id sides");
 
           let m = await channel.fetchMessage(f.latest_footer_id);
 

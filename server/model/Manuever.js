@@ -4,10 +4,9 @@ const Schema = mongoose.Schema;
 
 const ManueverSchema = new Schema(
     {
-        fecht: {
-            type: Schema.Types.ObjectId,
-            required: true,
-            ref: 'Fecht'
+        channel_id: {
+            type: String,
+            required: true
         },
         mention: {
             type: String,
@@ -35,8 +34,8 @@ const ManueverSchema = new Schema(
             default: ""
         },
         replyTo: {
-            type: Schema.Types.ObjectId,
-            ref: "Manuever"
+            type: Number,
+            default: 0
         },
         characterState: {
             type: Schema.Types.ObjectId,
