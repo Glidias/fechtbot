@@ -33,4 +33,18 @@
     "reactsD": "please choose:"
 }
 
+,
+
+{
+    "name": "Sword and Scoundrel Skirmish",
+    "initVal": 1,
+    "reactOnly": 1,
+    "reacts": ["🆗"],
+    "dmReacts": ["🗡", "🏃", "🚶"], 
+    "dmReactsM": ["!r Red: 1d6", "!r White: 1d6", "!r White: 2d6"],
+    "reactsD": "enter skirmish:",
+    "dmReactsD": "your action type (Red/White/2-White):"
+}
+
+
 ]

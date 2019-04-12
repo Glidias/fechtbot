@@ -172,7 +172,7 @@ async function endTurn(channel, phase, footerMessage, fecht) {
   for (i=0; i< len; i++) {
     a = allReacts[i];
     if (!a.result) continue;
-    if (rem = await isValidManueverMsg(a.result))  {
+    if (rem = await isValidManueverMsg(a.result, channel))  {
       mention = getMentionChar(a.user_id, a.handle);
       if (!mentionHashArr[mention]) mentionHashArr[mention] = [];
       man = await getManueverObj(a.result, typeof rem === "string" ? rem : rem.str, true, channel, mention, null, typeof rem !== "string" ? rem.m : null);
@@ -203,7 +203,7 @@ async function endTurn(channel, phase, footerMessage, fecht) {
 
   let bd = await channel.fetchMessage(fecht.latest_body_id).catch(errHandler);
   if (bd) {
-    let bdm = await getBodyRenderOfFecht(fecht);
+    let bdm = await getBodyRenderOfFecht(fecht, channel);
     bd.edit(bdm);
   }
   
@@ -230,9 +230,9 @@ async function cleanupFooter(fid, channel) {
   }
 }
 
-async function isValidManueverMsg(str) {
+async function isValidManueverMsg(str, channel) {
   return str.startsWith("!r ") ? isValidManeverExpr(str.slice(3)) : 
-  str.startsWith("!rp ") ? await isValidManeverRpExpr(str.slice(4)) 
+  str.startsWith("!rp ") ? await isValidManeverRpExpr(str.slice(4), channel) 
   : "";
 }
 
@@ -240,7 +240,7 @@ function isValidManeverExpr(str) {
   return str;
 }
 
-async function isValidManeverRpExpr(str) {
+async function isValidManeverRpExpr(str, channel) {
   var si = str.indexOf(" ");
   if (si < 0) return "";
    var spl = str.slice(0, si);
@@ -248,7 +248,7 @@ async function isValidManeverRpExpr(str) {
    if (isNaN(val)) {
      return "";
    } else {
-     let m = await Manuever.findOne({slot:val});
+     let m = await Manuever.findOne({channel_id: channel.id, slot:val});
      if (m) return {str:str, m:m};
    }
 }
@@ -277,11 +277,11 @@ function getHeaderRenderOfFecht(f) {
 
 
 
-async function getBodyRenderOfFecht(f) {
+async function getBodyRenderOfFecht(f, channel) {
  var embed = new Discord.RichEmbed();
  var i;
  var len;
- var manuevers = await Manuever.find({});
+ var manuevers = await Manuever.find({channel_id: channel.id});
 
  len = f.sides.length;
  for (i =0; i< len; i++) {
@@ -496,8 +496,9 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
     return;
   }
   
-  // to output emojis for tracing
+  // dev: to output emojis for tracing
   //messageReaction.message.channel.send( "\\"+messageReaction.emoji.toString() );
+
   runOnlyIfGotFecht(messageReaction.message.channel, user, async ()=> {
 
     if (messageReaction.message.author.id !== client.user.id ) { //|| !messageReaction.users.has(client.user.id)
@@ -641,7 +642,6 @@ client.on("messageUpdate", (oldMessage, message) => { // oldMessage might be nul
 });
 
 client.on("message", async (message) => {
-
   if (message.author.bot) {
     return;
   }
@@ -681,7 +681,7 @@ client.on("message", async (message) => {
                   if (err) return;
                   CHANNELS_FECHT[channel.id] = f._id;
                   m3.edit(new Discord.RichEmbed({description:"Fecht has begun!"}));
-                  getBodyRenderOfFecht(f).then((bdm)=> {
+                  getBodyRenderOfFecht(f, channel).then((bdm)=> {
                     m2.edit(bdm);
                   }).catch(errHandler);
                  
