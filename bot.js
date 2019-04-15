@@ -95,6 +95,56 @@ function getCharNameRegMatches(contents) {
   return matches;
 }
 
+async function rollMessage(message) {
+  let rem = await isValidManueverMsg(message.content, message.channel);
+  var msg = "<@"+message.author.id+">";
+  if (rem.handle) {
+    msg += ":"+rem.handle.trim();
+  }
+  msg += " **"+rem.str.trim()+"**";
+  if (rem.roll) {
+    msg += " `"+rem.roll.trim()+"`";
+  }
+  if (rem.comments) {
+    msg += " *# "+rem.comments.trim()+"*"
+  }
+  if (rem.roll) {
+    let results = DICE.roll(rem.roll);  
+    msg += "\n"+results.renderedExpression + SYMBOLS.dice + " ("+(results.successes >= 1 ? "**"+results.successes+"**" : results.successes)+"/"+results.failures+")" + " = "+results.total;
+  }
+  message.channel.send(msg);
+}
+
+async function rollMessage2(message) {
+  let member = message.channel.members.get(message.author.id);
+  let user = message.author;
+  if (!member) return await rollMessage(message);
+
+  let rem = await isValidManueverMsg(message.content, message.channel);
+  var msg = "";
+
+  msg += " **"+rem.str.trim()+"**";
+  if (rem.roll) {
+    msg += " `"+rem.roll.trim()+"`";
+  }
+  if (rem.comments) {
+    msg += " *# "+rem.comments.trim()+"*"
+  }
+  if (rem.roll) {
+    let results = DICE.roll(rem.roll);  
+    msg += "\n"+results.renderedExpression + SYMBOLS.dice + " ("+(results.successes >= 1 ? "**"+results.successes+"**" : results.successes)+"/"+results.failures+")" + " = "+results.total;
+  }
+  
+  message.channel.send(new Discord.RichEmbed({
+    "description": msg, //remainingContents[remainingContents.length-1]
+    "author": {
+      "name": member.displayName+(rem.handle ? ":"+rem.handle.trim() : ""), // + (remainingContents.length > 1 ? remainingContents[0] : ""),
+      "icon_url": user.displayAvatarURL
+    }
+  }));
+ 
+}
+
 client.on("ready", () => {
   console.log("FechtBot Online!");
 });
@@ -155,11 +205,12 @@ async function isValidManeverRpExpr(str, channel) {
   var si = str.indexOf(" ");
   if (si < 0) return "";
    var spl = str.slice(0, si);
-   var val = parseInt(spl[0]);
+   var val = parseInt(spl);
    if (isNaN(val)) {
      return {error:ERROR_SLOT};
    } else {
      let m = await Manuever.findOne({channel_id: channel.id, slot:val});
+     if (!m) return {error:ERROR_SLOT};
      let obj = isValidManeverExpr(str.slice(si+1));
      if (obj) obj.m = m;
      return obj;
@@ -189,7 +240,7 @@ async function getManueverObj(rem, react, channel, mention) {
 }
 
 async function checkAndReactMessage(message, footerTurnMessage) {
-  let chk = await isValidManueverMsg(message.content);
+  let chk = await isValidManueverMsg(message.content, message.channel);
   if (message.reactions.size) await message.clearReactions();
   if (chk && !chk.error) {
     
@@ -414,7 +465,7 @@ async function getBodyRenderOfFecht(f, channel) {
  for (i=0; i< len; i++) {
   m = manuevers[i]; 
   strikeThru = m.canceled ? "~~" : "";
-  embed.addField((strikeThru+"*"+m.slot + ".* " + m.label + (m.roll ? (!strikeThru ? SYMBOLS.dice : ":")+" "+m.roll : "")) +strikeThru, strikeThru+(m.comment ? m.comment : "")+"\n- " + m.mention+ strikeThru );
+  embed.addField((strikeThru+"*"+m.slot + ".* " + m.label + (m.roll ? (!strikeThru ? " " + SYMBOLS.dice : ": ")+m.roll : "")) +strikeThru, strikeThru+(m.comment ? m.comment : "")+"\n- " + m.mention+ strikeThru );
  }
 
  return embed;
@@ -623,19 +674,25 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
 
   runOnlyIfGotFecht(messageReaction.message.channel, user, async ()=> {
 
-    if (messageReaction.message.author.id !== client.user.id ) { //|| !messageReaction.users.has(client.user.id)
-      messageReaction.remove(user);
-     // user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!")
-      return;
-    }
-
     if (messageReaction.users.size < 2) {
       messageReaction.users = await messageReaction.fetchUsers();
     }
 
     if (!messageReaction.users.has(client.user.id)) { //|| 
       messageReaction.remove(user);
-      //user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!");
+      // user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!");
+      return;
+    }
+
+    if (messageReaction.message.author.id !== client.user.id ) { //|| !messageReaction.users.has(client.user.id)
+      messageReaction.remove(user);
+     // user.send("Please do not add unauthorised reactions to messages while a fecht is in progress!")
+      if (messageReaction.message.author.id === user.id) { // Or gamemaster user_id...
+        if (messageReaction.emoji.name === SYMBOLS.dice) {
+          rollMessage(messageReaction.message);
+          return;
+        }
+      }
       return;
     }
 
