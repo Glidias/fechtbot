@@ -37,6 +37,14 @@ const ManueverSchema = new Schema(
             type: Number,
             default: 0
         },
+        canceled: {
+            type: Boolean,
+            default: false
+        },
+        message_id: {
+            type: String,
+            default: ""
+        },
         characterState: {
             type: Schema.Types.ObjectId,
             ref: 'CharacterState'

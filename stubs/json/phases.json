@@ -29,7 +29,7 @@
     "initVal": 1,
     "reactOnly": 1,
     "reacts": ["😡", "😯", "😷"],
-    "reactsM": ["!r Red", "!r Green", "!r Blue"], 
+    "reactsM": ["!r Red", "!r Yellow", "!r Blue"], 
     "reactsD": "please choose:"
 }
 
