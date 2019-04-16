@@ -25,6 +25,10 @@ const CharacterStateSchema = new Schema(
             type: Number,
             default: 0
         },
+        initReact: {
+            type: Number,
+            default: 0
+        },
         character: {
             type: Schema.Types.ObjectId,
             required: true,

@@ -35,10 +35,23 @@ const FechtSchema = new Schema(
             type: Number,
             default: 0
         },
+        initStep: {
+            type: Number,
+            get: v => Math.round(v),
+            set: v => Math.round(v),
+            alias: 'i',
+            default: 0
+         },
+         miscTurnCount: {
+            type: Number,
+            default: 0
+         },
         /*
-        lastResolved: {
-            type: String
-        },
+        initArray: [{
+                type: Schema.Types.ObjectId,
+                required: true,
+                ref: 'CharacterState'
+        }],
         */
         sides: [{
             type: String,
@@ -61,6 +74,14 @@ const FechtSchema = new Schema(
                 required: true,
                 trim: true
             }],
+            initVal: {
+                type: Number,
+                default: 1
+            },
+            initSingle: {
+                type: Boolean,
+                default: false
+            },
             dmReacts: [{
                 type: String,
                 required: true,
@@ -85,32 +106,20 @@ const FechtSchema = new Schema(
                 type: String,
                 trim: true,
                 default: ""
-            }]
-        }],
-        /*
-        initArray: [{
-                type: Schema.Types.ObjectId,
-                required: true,
-                ref: 'CharacterState'
-        }],
-        */
-        initStep: {
-            type: Number,
-            get: v => Math.round(v),
-            set: v => Math.round(v),
-            alias: 'i',
-            default: 0
-        },
-        totalUsers: {
-            type: Number,
-            default: 0
-        },
-        users: {
-            type: Map,
-            of: {
-                type: Number
+            }],
+            initReact: {
+                type: Number,
+                default: 0
+            },
+            initSort: {
+                type: Number,
+                default: 0
+            },
+            resolveSort: {
+                type: Number,
+                default: 0
             }
-        }
+        }]
     },
     {
         timestamps: {
