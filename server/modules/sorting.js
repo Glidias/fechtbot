@@ -12,35 +12,59 @@ function SortMethodsForField(fieldName) {
 	this.sort_lowestFirstNegFlip = (a, b)=> {
 		a = a[this.fieldName];
 		b = b[this.fieldName];
-		
+	
 		var diff = a - b;
-		if(diff === 0) {
-			return Math.random() < 0.5 ? -1 : 1;
+		if (a < 0 !== b < 0) {
+		return a < 0 ? 1 : -1;
 		}
-		
+
+		if(diff === 0) {
+		return Math.random() < 0.5 ? -1 : 1;
+		}
+	
 		if (a < 0 && b < 0) {
-			return -diff;
+		return -diff;
 		}
 		return diff;
-		}
+	}
 		
 	 this.sort_highestFirst = (a, b)=> {
-		var diff = b[this.fieldName] - a[this.fieldName]
+		var ai = a[this.fieldName] < 0 ? Math.ceil(a[this.fieldName]) : Math.floor(a[this.fieldName]);
+		var bi = b[this.fieldName] < 0 ? Math.ceil(b[this.fieldName]) : Math.floor(b[this.fieldName]);
+		var diff = bi - ai;
 		if(diff == 0) {
+			if (ai !== a[this.fieldName] || bi !== b[this.fieldName]) {
+				if (ai !== a[this.fieldName] && bi !== b[this.fieldName]) {
+					return sort_lowestFirstNegFlip(a, b);
+				} else if (ai !== a[this.fieldName]) {
+					return 1;
+				} else {
+					return -1;
+				}
+			} 
 			return Math.random() < 0.5 ? -1 : 1;
 		}
 		return diff;
 	}
 		
 	this.sort_highestFirstNegFlip = (a, b)=> {
-		a = a[this.fieldName];
-		b = b[this.fieldName];
-		
-		var diff = b - a;
+		var ai = a[this.fieldName] < 0 ? Math.ceil(a[this.fieldName]) : Math.floor(a[this.fieldName]);
+		var bi = b[this.fieldName] < 0 ? Math.ceil(b[this.fieldName]) : Math.floor(b[this.fieldName]);
+	
+		var diff = bi - ai;
 		if(diff == 0) {
+			if (ai !== a[this.fieldName] || bi !== b[this.fieldName]) {
+				if (ai !== a[this.fieldName] && bi !== b[this.fieldName]) {
+					return sort_lowestFirstNegFlip(a, b);
+				} else if (ai !== a[this.fieldName]) {
+					return 1;
+				} else {
+					return -1;
+				}	
+			} 
 			return Math.random() < 0.5 ? -1 : 1;
 		}
-		
+	
 		if (a < 0 && b < 0) {
 			return -diff;
 		}
