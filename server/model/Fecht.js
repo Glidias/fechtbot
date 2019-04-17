@@ -35,6 +35,10 @@ const FechtSchema = new Schema(
             type: Number,
             default: 0
         },
+        gamemaster_id: {
+            type: String,
+            default: ""
+        },
         initStep: {
             type: Number,
             get: v => Math.round(v),

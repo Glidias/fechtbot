@@ -21,6 +21,9 @@ function sendTempMessageDM(text, user) {
     });
 }
 
+function stripSpaces(str) {
+    return str.replace(/ /g, "");
+}
 
 /*
 function sendTempNotification(text, channel) {
@@ -43,6 +46,7 @@ module.exports = {
     sendTempMessage: sendTempMessage,
     sendTempMessageDM: sendTempMessageDM,
     delayedDelete: delayedDelete,
-    deleteMessage: deleteMessage
+    deleteMessage: deleteMessage,
+    stripSpaces: stripSpaces
    // sendTempNotification: sendTempNotification
 }
