@@ -1151,6 +1151,7 @@ client.on("message", async (message) => {
           CHANNELS_FECHT[f._id] = null;
           await cleanupFooter(fid, channel);
           await cleanupChannel(channel, fid, m=>m.author.id === client.user.id && m.reactions.size);
+          message.delete();
           return;
         } else {
           sendTempMessage("There is no fecht currently in progress.", channel);
