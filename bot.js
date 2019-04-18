@@ -191,14 +191,16 @@ async function rollResolvableMsg(message) {
   //splits2[1] = " *"+splits2[1]+"* ";
   splits2.shift();
   let slot = parseFloat(splits2[0]);
-  await Manuever.deleteOne({channel_id:message.channel.id, slot:slot})
+  await Manuever.deleteOne({channel_id:message.channel.id, slot:slot});
+
+  splits2.shift();
   let str =  splits2.join(" ");
   //console.log(str);
   //str.replace(SYMBOLS.dice, ":");
   let rem = isValidManeverExpr(str);
 
   rem.handle = dec.handle;
-  return await rollMessageFinal(message, rem, dec.id);
+  return await rollMessageFinal(message, rem, dec.id, slot);
 }
 
 async function rollMessage(message, userCharHash) {
@@ -211,10 +213,13 @@ async function rollMessage(message, userCharHash) {
   return await rollMessageFinal(message, rem, message.author.id);
 }
 
-async function rollMessageFinal(message, rem, userid) {
+async function rollMessageFinal(message, rem, userid, slot) {
   var msg = "<@"+userid+">";
   if (rem.handle) {
     msg += ":"+rem.handle.trim();
+  }
+  if (slot !== undefined) {
+    msg += " *"+slot+".*"
   }
   msg += " **"+rem.str.trim()+"**";
   if (rem.roll) {
