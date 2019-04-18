@@ -232,7 +232,7 @@ async function rollMessageFinal(message, rem, userid) {
 
 async function rollManuever(manuever, channel) {
   var msg = manuever.mention;
-  msg += " **"+manuever.label+"**";
+  msg += " "+manuever.slot+ " **"+manuever.label+"**";
   if (manuever.roll) {
     msg += " `"+manuever.roll+"`";
   }
@@ -1164,7 +1164,7 @@ client.on("message", async (message) => {
           await Manuever.deleteMany({channel_id:channel.id}).catch(errHandler);
           
           await channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
-          CHANNELS_FECHT[f._id] = null;
+          CHANNELS_FECHT[channel.id] = null;
           await cleanupFooter(fid, channel);
           await cleanupChannel(channel, fid, m=>m.author.id === client.user.id && m.reactions.size);
           message.delete();
@@ -1300,13 +1300,17 @@ client.on("message", async (message) => {
             }
           }
         } else if (m.embeds[0].title === TITLES.resolution) {
-          sendTempMessage("<@"+message.author.id+"> Non GMs can only use `!s`", channel);
-          message.delete();
-          return;
+          if ( f.gamemaster_id !== message.author.id) {
+            sendTempMessage("<@"+message.author.id+"> Non GMs can only use `!s`", channel);
+            message.delete();
+            return;
+          }
           
         } else {
-          message.delete();
-          return;
+          if ( f.gamemaster_id !== message.author.id) {
+            message.delete();
+            return;
+          }
         }
      //  } 
        /*
