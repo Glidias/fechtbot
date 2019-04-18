@@ -104,7 +104,7 @@ const FORWARDED_PACKETS = ["MESSAGE_REACTION_ADD", "MESSAGE_REACTION_REMOVE", "M
 
 const CHAR_NAME_REGSTR = '(<@[0-9]+>(?:[ ]*:[ ]*[^@#,`<> \n]+)?)';
 const USER_ID_REGSTR = '<@[0-9]+>';
-const INLINE_ROLL_REGSTR = '!`([^`]+)`+';
+const INLINE_ROLL_REGSTR = '!`([^`\n]+)`+';
 
 function tryRoll(roll) {
   let result;
@@ -204,8 +204,8 @@ async function rollResolvableMsg(message) {
 async function rollMessage(message, userCharHash) {
   let rem = await isValidManueverMsg(message.content, message.channel);
   if (!rem.handle && userCharHash) {
-    if (userCharHash.defaulting[message.author.id] != null) {
-      rem.handle = userCharHash.defaulting[message.author.id];
+    if (userCharHash.defaulting["<@"+message.author.id+">"] != null) {
+      rem.handle = userCharHash.defaulting["<@"+message.author.id+">"];
     }
   }
   return await rollMessageFinal(message, rem, message.author.id);
@@ -285,8 +285,8 @@ async function rollMessage2(message, userCharHash) {
 
   let rem = await isValidManueverMsg(message.content, message.channel);
   if (!rem.handle && userCharHash) {
-    if (userCharHash.defaulting[msg] != null) {
-      rem.handle = userCharHash.defaulting[msg];
+    if (userCharHash.defaulting["<@"+message.author.id+">"] != null) {
+      rem.handle = userCharHash.defaulting["<@"+message.author.id+">"];
     }
   }
 
@@ -401,15 +401,15 @@ async function getManueverObj(rem, react, channel, mention) {
   var obj =  {
     channel_id: channel.id,
     mention: mention,
-    slot: !rem.replyManuever ? 0 : rem.replyManuever.slot + "." + (rem.r + 1), // TO properly set this based on rp
+    slot: !rem.m ? 0 : parseFloat(rem.m.slot + "." + (rem.r + 1)), // TO properly set this based on rp
     label: rem.str,
     roll: rem.roll,
     comment: rem.comments,
     react: react
   };
-  
-  if (rem.replyManuever) {  // determine the replyTo objectId
-    obj.replyTo = rem.replyManuever.slot;
+
+  if (rem.m) {  // determine the replyTo objectId
+    obj.replyTo = rem.m.slot;
   }
 
   if (rem.charState) {
@@ -520,6 +520,8 @@ async function endTurn(channel, phase, footerMessage, fecht) {
   let mention;
   let mentionHashArr = {};
 
+ 
+
   for (i=0; i< len; i++) {
     a = allReacts[i];
     if (!a.result) continue;
@@ -555,6 +557,7 @@ async function endTurn(channel, phase, footerMessage, fecht) {
 
   
 
+  let rpCountHash = {};
   let collectArr = [];
   let slotCount = await Manuever.countDocuments({channel_id:channel.id, replyTo:0});
   len = matches.length;
@@ -565,6 +568,17 @@ async function endTurn(channel, phase, footerMessage, fecht) {
     }
     a.forEach((obj)=> {
       if (!obj.replyTo) obj.slot = ++slotCount;
+      else {
+        if (rpCountHash["_"+obj.replyTo] === undefined) {
+          rpCountHash["_"+obj.replyTo] = 0;
+        } else {
+          let spl = obj.replyTo.toString().split(".");
+          spl[0] = parseInt(spl[0]);
+          spl[1] = spl[1] ? parseInt(spl[1]) : 0;
+          obj.slot = parseFloat( spl[0] +  "." + (spl[1] || 0) + (++rpCountHash["_"+obj.replyTo]) );
+
+        }
+      }
       collectArr.push(obj);
     })
   }
@@ -775,7 +789,7 @@ client.on('raw', async packet => {
   if (client.user.id === packet.d.user_id) {
     return;
   }
-
+  //console.log(packet);
   let messageId = packet.t === "MESSAGE_UPDATE" ? packet.d.id : packet.d.message_id;
 
   // Grab the channel to check the message from
@@ -791,10 +805,12 @@ client.on('raw', async packet => {
         return false;
        }
      } else {
-       console.log("Failed to find fecht...DM channel");
+       //console.log("Failed to find fecht...DM channel");
        return false;
      }
   }
+
+
   
   if (!succeeded || channel.type === "dm") { // need to emulate private DM message handling instead
     if (packet.t === "MESSAGE_REACTION_ADD") {  
@@ -1243,16 +1259,46 @@ client.on("message", async (message) => {
 
       let isGm = m.embeds[0].title !== TITLES.turnFor && message.author.id === f.gamemaster_id;
       let isOutgame = false;
+      let handle = "";
 
-      if (f.gamemaster_id !== message.author.id) {
-        if (m.embeds[0].title !== TITLES.turnFor) {
-          let matches = getUserFooterMatches(m);
-          if (!matches.includes("<@"+message.member.user.id+">")) {
+      let invalidHandle = false;
+    
+     // if ( f.gamemaster_id !== message.author.id) {
+        if (m.embeds[0].title === TITLES.turnFor) {
+         
+          let matches = getCharFooterMatches(m);
+          let userCharHash = getUserCharHash(matches);
+          if (userCharHash.defaulting["<@"+message.member.user.id+">"] === undefined) {
             sendTempMessage("<@"+message.member.user.id+"> It's not your turn yet to use permanent `!say`. Use `!s` instead for temporary chat.", channel);
             message.delete();
             return;
+          } else {
+            if (remainingContents.startsWith(":")) {
+              let li = remainingContents.indexOf(" ");
+              if (li >=0) {
+                handle = remainingContents.slice(1, li);
+                remainingContents = remainingContents.slice(li);
+                if (remainingContents) remainingContents.trim();
+                else remainingContents = "";
+              }
+              if (handle && !userCharHash.hash["<@"+message.member.user.id+">"+":"+handle]) {
+                isGm = false;
+                isOutgame = true;
+                invalidHandle = true;
+              }
+            }
+
+            if (!handle) {
+              if (userCharHash.defaulting["<@"+message.member.user.id+">"] != null) handle = userCharHash.defaulting["<@"+message.member.user.id+">"];
+              else {
+                if (!userCharHash.hash["<@"+message.member.user.id+">"]) {
+                  isGm = false;
+                  isOutgame = true;
+                  invalidHandle = true;
+                }
+              }
+            }
           }
-          
         } else if (m.embeds[0].title === TITLES.resolution) {
           sendTempMessage("<@"+message.author.id+"> Non GMs can only use `!s`", channel);
           message.delete();
@@ -1262,22 +1308,30 @@ client.on("message", async (message) => {
           message.delete();
           return;
         }
-       } else {
+     //  } 
+       /*
+       else { // exception for GM during turnFor?
         if (m.embeds[0].title === TITLES.turnFor) {
-          let matches = getUserFooterMatches(m);
-          if (!matches.includes("<@"+message.member.user.id+">")) {
+          let matches = getCharFooterMatches(m);
+          let userCharHash = getUserCharHash(matches);
+          if (userCharHash.defaulting["<@"+message.member.user.id+">"] === undefined) {
             isGm = false;
             isOutgame = true;
+          } else {
+            if (userCharHash.defaulting["<@"+message.member.user.id+">"] != null) {
+              handle = userCharHash.defaulting["<@"+message.member.user.id+">"];
+            }
           }
           
         }
        }
+       */
         
        channel.send(new Discord.RichEmbed({
           "description": getInlineRolls(remainingContents), //remainingContents[remainingContents.length-1]
-          "color": isGm ? COLOR_GM : undefined,
+          "color": isGm ? COLOR_GM : (isOutgame ? COLOR_OUT_OF_GAME : undefined),
           "author": {
-            "name": (isGm ? GM_PREFIX : "") + (isGm ? "" : (isOutgame ? OUTGAME_PREFIX : "")+message.member.displayName), // + (remainingContents.length > 1 ? remainingContents[0] : ""),
+            "name": (isGm ? GM_PREFIX : "") + (isGm ? "" : (isOutgame ? OUTGAME_PREFIX : "")+message.member.displayName) + (invalidHandle ? "  "+ SYMBOLS.x_black : "") +  (handle ? " :"+handle : ""), // + (remainingContents.length > 1 ? remainingContents[0] : ""),
             "icon_url": message.author.displayAvatarURL
           }
         }));
@@ -1330,7 +1384,7 @@ client.on("message", async (message) => {
         }
         await channel.send(remainingContents === "all" ? "All actions rolled!" : "..ready to resolve plays!")
         await m.edit(new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.resolution, description: (remainingContents === "all" ? "" : "GM may: "+SYMBOLS.play+"or `!e` actions!\n")+getCarryOnMsg() }));
-       
+
       return;
       case 'r':
       case 'rp':

@@ -35,7 +35,7 @@ function SortMethodsForField(fieldName) {
 		if(diff == 0) {
 			if (ai !== a[this.fieldName] || bi !== b[this.fieldName]) {
 				if (ai !== a[this.fieldName] && bi !== b[this.fieldName]) {
-					return sort_lowestFirstNegFlip(a, b);
+					return this.sort_lowestFirstNegFlip(a, b);
 				} else if (ai !== a[this.fieldName]) {
 					return 1;
 				} else {

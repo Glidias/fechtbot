@@ -6,7 +6,9 @@
 	"author": "Glidias",
 	"scripts": {
 		"start": "node bot.js",
+		"start:lite": "node botlite.js",
 		"devstart": "nodemon bot.js",
+		"devstart:lite": "nodemon botlite.js",
 		"seed": "node server/tests/seed/seed.js"
 	},
 	"dependencies": {

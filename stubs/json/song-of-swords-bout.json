@@ -16,6 +16,10 @@
 		"initReact": 1
 	},
 	{
+		"name": "Threading",
+		"initVal": 0
+	},
+	{
 		"name": "First Action",
 		"resolveSort": 2,
 		"initSingle": 1
