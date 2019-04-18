@@ -975,8 +975,11 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
     if (messageReaction.emoji.name === SYMBOLS.x) {
       //let f = await Fecht.findOne({channel_id: channel.id}, "gamemaster_id");
       if (user.id === f.gamemaster_id && !isBotEmbed(messageReaction.message) ) {
-        if (messageReaction.message.author.id === client.user.id && messageReaction.message.content.startsWith("!e")) {
-          await deleteResolvableMsg(messageReaction.message).catch(errHandler);
+        if (messageReaction.message.author.id === client.user.id && messageReaction.message.content.startsWith("!e") && messageReaction.message.reactions.first().users.has(client.user.id)) {
+          let d = await deleteResolvableMsg(messageReaction.message).catch(errHandler);
+          if (d.n >=1) {
+            messageReaction.message.channel.send("**Cancelled**: "+messageReaction.message.content);
+          }
         }
         messageReaction.message.delete().catch(emptyHandler);
         return;
@@ -1427,7 +1430,7 @@ client.on("message", async (message) => {
           await channel.send("..ready to resolve.");
           i = msgArray.length;
           while(--i > -1) {
-             msgArray[i] = msgArray[i].react(SYMBOLS.play);  
+             msgArray[i] = msgArray[i].react(SYMBOLS.play).catch(emptyHandler);  
           }
         }
         
@@ -1506,12 +1509,27 @@ client.on("message", async (message) => {
           */
 
           let wasResolution = lastFooterTitle === TITLES.resolution;
+
+          if (wasResolution) {
+            let allMs = await Manuever.find({channel_id:channel.id}, "message_id");
+            i = allMs.length;
+            while(--i > -1) {
+              if (!allMs[i].message_id) continue;
+              let am = await channel.fetchMessage(allMs[i].message_id);
+              if (am) {
+                await am.delete().catch(emptyHandler);
+                //await am.clearReactions().catch(errHandler);
+              }
+            }
+            
+          }
+
           ///*
           let isDirty = await checkChannelDirty(channel, f.latest_footer_id, (m)=> {
             return (m.embeds && m.embeds[0]) || (wasResolution && (m.author.id === f.gamemaster_id || (m.author.id === client.user.id && (!m.content.startsWith(TEMP_NOTIFY_PREFIX) || m.content.startsWith("!e"))) ))  || (m.author.id === client.user.id && m.content.startsWith("|<@"));
           });
           //*/
-          
+
 
           /* // THis method doesn't seem to work fullproof
           //let isDirty = await checkChannelDirtyAny(channel, f.latest_footer_id);
