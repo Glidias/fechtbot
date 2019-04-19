@@ -4,6 +4,10 @@
 	"description": "FechtBot",
 	"main": "bot.js",
 	"author": "Glidias",
+	 "engines": {
+		"node": "8.11.3",
+		"npm": "*"
+  	},
 	"scripts": {
 		"start": "node bot.js",
 		"start:lite": "node botlite.js",
