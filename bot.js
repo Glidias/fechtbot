@@ -66,7 +66,8 @@ const TITLES = {
   turnEnding: ".. Ending turn ..",
   resolvingPlays: ".. Resolving plays ..",
   settingUpResolvePlays: ".. Setting up resolve plays ..",
-  resolution: ":: Resolution of Plays ::"
+  resolution: ":: Resolution of Plays ::",
+  enteringPhase: ":: Entering new phase ::"
 };
 
 const DESCS = {
@@ -247,7 +248,7 @@ async function rollMessageFinal(message, rem, userid, slot) {
 
 async function rollManuever(manuever, channel) {
   var msg = manuever.mention;
-  msg += " "+manuever.slot+ " **"+manuever.label+"**";
+  msg += " *"+manuever.slot+ "*. **"+manuever.label+"**";
   if (manuever.roll) {
     msg += " `"+manuever.roll+"`";
   }
@@ -524,7 +525,6 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
   let userCharHash = getUserCharHash(matches);
   await footerMessage.edit(new Discord.RichEmbed({title:TITLES.turnEnded, description: DESCS.pleaseWait,  color:COLOR_BOT}));
   
-  // todo: convert this to manuevers
   let allReacts = await DMReact.find({channel_id:channel.id}).catch(errHandler);
   let i;
   let spl;
@@ -638,7 +638,7 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
 }
 
 function getCurrentPhase(f) {
-  return f.phases ? f.phases[f.phaseCount ? f.phaseCount - 1 : 0] || {} : {};
+  return f.phases ? f.phases[f.phaseCount-1] || {} : {};
 }
 
 async function cleanupFooter(fid, channel) {
@@ -695,7 +695,7 @@ async function getBodyRenderOfFecht(f, channel) {
  var len;
  var manuevers = await Manuever.find({channel_id: channel.id});
  var phase = getCurrentPhase(f);
- var phaseName = f.phaseCount >= 1 ? phase.name || ("Phase " + f.phaseCount)  : "";
+ var phaseName = f.phaseCount >= 1 ? phase.name || ("Phase " + f.phaseCount)  : "--";
 
  embed.title = `(${f.roundCount+1}.${f.phaseCount}:${f.initStep}` + (f.miscTurnCount ? "."+f.miscTurnCount : "") + ') ' + phaseName;
  embed.color = COLOR_MAIN;
@@ -856,7 +856,7 @@ client.on('raw', async packet => {
             if (userR) sendTempMessageDM("You've already reacted! Can't re-submit!", userR);
             return;
           } else {
-            let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount latest_footer_id latest_body_id sides roundCount initStep miscTurnCount gamemaster_id");
+            let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount latest_footer_id latest_body_id sides roundCount initStep miscTurnCount backtrackCount gamemaster_id");
             if (!f) {
               sendTempMessageDM("The reaction is expired! Can't find fecht channel!", userR);
               return;
@@ -975,8 +975,10 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
     if (messageReaction.emoji.name === SYMBOLS.x) {
       //let f = await Fecht.findOne({channel_id: channel.id}, "gamemaster_id");
       if (user.id === f.gamemaster_id && !isBotEmbed(messageReaction.message) ) {
-        if (messageReaction.message.author.id === client.user.id && messageReaction.message.content.startsWith("!e") && messageReaction.message.reactions.first().users.has(client.user.id)) {
+        if (messageReaction.message.author.id === client.user.id && messageReaction.message.content.startsWith("!e")) {
+          // && messageReaction.message.reactions.first().users.has(client.user.id)
           let d = await deleteResolvableMsg(messageReaction.message).catch(errHandler);
+         
           if (d.n >=1) {
             messageReaction.message.channel.send("**Cancelled**: "+messageReaction.message.content);
           }
@@ -1013,7 +1015,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
     
     if (messageReaction.message.embeds[0] && messageReaction.message.embeds[0].title === TITLES.turnFor) {
       let matches = getUserFooterMatches(messageReaction.message);
-      //let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount latest_body_id sides roundCount initStep miscTurnCount gamemaster_id");
+      //let f = await Fecht.findOne({channel_id: channel.id}, "phases phaseCount latest_body_id sides roundCount initStep miscTurnCount backtrackCount gamemaster_id");
       let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
       if (!phase) phase = {};
       if (matches.includes("<@"+user.id+">")) {
@@ -1039,7 +1041,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         
         let message = await messageReaction.message.clearReactions();
         
-        //let f = await Fecht.findOne({channel_id: channel.id}, "latest_footer_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount");
+        //let f = await Fecht.findOne({channel_id: channel.id}, "latest_footer_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount backtrackCount");
         let phase = f.phases[f.phaseCount > 0 ? f.phaseCount - 1 : 0];
         if (!phase) phase = {};
         if (!phase.reacts || !phase.reacts.length) return;
@@ -1129,7 +1131,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         messageReaction.remove(user);
       }
     }
-  }, "latest_footer_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount gamemaster_id");
+  }, "latest_footer_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount backtrackCount gamemaster_id");
 
 });
 
@@ -1160,11 +1162,8 @@ client.on("message", async (message) => {
       if (command === "fechtstart") {  
         Fecht.findOne({channel_id: channel.id}, "_id").then((f)=> {
           if (f) {
-           
             if (CHANNELS_FECHT[channel.id] === undefined) CHANNELS_FECHT[channel.id] = f._id;
             sendTempMessage("Fecht is already in progress for this channel...", channel);
-
-          
           } else {
           channel.send(getHeaderRenderOfFecht()).then((m1)=> {
             channel.send(new Discord.RichEmbed({ color:COLOR_MAIN, description:"..."})).then((m2)=> {
@@ -1176,7 +1175,6 @@ client.on("message", async (message) => {
                   latest_footer_id: m3.id,
                   latest_body_id: m2.id,
                   gamemaster_id: message.author.id,
-                  json: '{}',
                   sides: ['Side A', 'Side B'],
                 }, (err, f)=> {
                   if (err) return;
@@ -1185,9 +1183,7 @@ client.on("message", async (message) => {
                   getBodyRenderOfFecht(f, channel).then((bdm)=> {
                     m2.edit(bdm);
                   }).catch(errHandler);
-                 
                   //m1.pin();
-
                 });
               })
             });
@@ -1282,7 +1278,7 @@ client.on("message", async (message) => {
       break;
       case 'skipturnall':
       case 'endturnall':
-        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id gamemaster_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount");
+        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id gamemaster_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount backtrackCount");
         m = await channel.fetchMessage(f.latest_footer_id);
         if (m.embeds[0].title !== TITLES.turnFor) {
           sendTempMessage("Turn has already ended...", channel);
@@ -1310,7 +1306,7 @@ client.on("message", async (message) => {
           let matches = getCharFooterMatches(m);
           let userCharHash = getUserCharHash(matches);
           if (userCharHash.defaulting["<@"+message.member.user.id+">"] === undefined) {
-            sendTempMessage("<@"+message.member.user.id+"> It's not your turn yet to use permanent `!say`. Use `!s` instead for temporary chat.", channel);
+            sendTempMessage("<@"+message.member.user.id+"> It's not your turn yet to use `!say`. Use `!s` instead for outgame chat.", channel);
             message.delete();
             return;
           } else {
@@ -1462,8 +1458,149 @@ client.on("message", async (message) => {
         await checkAndReactMessage(message, m);
       return;
       case 'p':
+        message.delete();
+       
+  
+         f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
+         if (!remainingContents) {
+          if (f.phases && f.phases.length ) sendTempMessage("List of phases:\n" + f.phases.map((p,i)=>"*"+(i+1)+"*. "+p.name).join("\n"), channel);
+          return;
+        }
+
+           m = await channel.fetchMessage(f.latest_footer_id);
+
+
+            // except for this non duplicate
+           if (m.embeds[0].description === DESCS.pleaseWait) { 
+            return;
+          }
+
+
+          let lastFooterTitle = m.embeds[0].title;
+          if (lastFooterTitle === TITLES.turnFor) {
+            //await endTurn(channel, getCurrentPhase(f), m);
+            sendTempMessage("Please end turn first. GM can force this with `!endturnall`/`!skipturnall`.", channel);
+            //message.delete();
+            return;
+          }
+
+        let phaseSelectionMode = lastFooterTitle === TITLES.enteringPhase || !lastFooterTitle;
+        let phasesArray = f.phases && f.phases.length ? f.phases : [];
+        let backtrackCount = 0;
+        let newPhaseCount = f.phaseCount;
+        let roundCount = f.roundCount;
+        let miscTurnCount = 0;
+
+        if (remainingContents === ">") {
+          newPhaseCount++;
+          if (newPhaseCount > phasesArray.length) {
+            newPhaseCount = phasesArray.length >= 1 ? 1 : 0;
+          }
+        } else if (remainingContents.startsWith(">") && remainingContents.length >= 2) {
+           newPhaseCount = parseInt(remainingContents.slice(1));
+        } else {
+           newPhaseCount = parseInt(remainingContents);
+        }
+
+       
+        
+        if (isNaN(newPhaseCount) || newPhaseCount<0 || newPhaseCount > phasesArray.length) {
+          sendTempMessage("GM, please assign correct phase number..", channel);  
+          return;
+          }
+
+
+        let goingForward = false;
+        if (!remainingContents.startsWith(">") && newPhaseCount < f.phaseCount) {
+          if (!phaseSelectionMode) {
+            backtrackCount = f.backtrackCount + 1;
+          }
+          goingForward =false;
+        }
+
+        let newRound = false;
+        if (remainingContents.startsWith(">") || newPhaseCount > f.phaseCount) {
+          goingForward = true;
+          if (!phaseSelectionMode && remainingContents.startsWith(">") && newPhaseCount <= f.phaseCount) {
+            roundCount++;
+            newRound = true;
+          }
+        }
+
+       
+        f.phaseCount = newPhaseCount;
+        if (!phaseSelectionMode) f.backtrackCount = backtrackCount;
+        f.roundCount = roundCount;
+        f.miscTurnCount = miscTurnCount;
+        f.initStep = 0;
+        
+        let newPhaseObj = getCurrentPhase(f);
+        if (newPhaseCount === f.phaseCount) {
+           if (!newRound) miscTurnCount = f.miscTurnCount+1;
+           let descPrefix = newRound ? "Proceeding next round to" : (!phaseSelectionMode ? "Re-entering new" : "Selecting new");
+           sendTempMessage(descPrefix+" phase *("+(f.phaseCount || 0)+")* "+(newPhaseObj.name ? newPhaseObj.name : ""), channel);  
+        } else {
+           let descPrefix = goingForward ? "Proceeding to" : "Backtracking to";
+           sendTempMessage(descPrefix + " phase *("+(f.phaseCount || "")+")* "+(newPhaseObj.name ? newPhaseObj.name : ""), channel);
+        }
+
+
+          // DUplication begins here
+          let wasResolution = lastFooterTitle === TITLES.resolution;
+          if (wasResolution) {
+            let allMs = await Manuever.find({channel_id:channel.id}, "message_id");
+            let i = allMs.length;
+            while(--i > -1) {
+              if (!allMs[i].message_id) continue;
+              let am = await channel.fetchMessage(allMs[i].message_id).catch(emptyHandler);
+              if (am) {
+                await am.delete().catch(emptyHandler);
+                //await am.clearReactions().catch(errHandler);
+              }
+            }
+            
+          }
+
+          let isDirty = wasResolution;
+          // duplication ends here
+         
+        
+          await Manuever.deleteMany({channel_id:channel.id}).catch(errHandler);
+
+          if (!isDirty && !phaseSelectionMode && lastFooterTitle) {
+            isDirty = await checkChannelDirty(channel, f.latest_footer_id, (m)=> {
+              return (m.embeds && m.embeds[0]);
+            });
+          }          
+
+
+       
+          await f.save();
+
+          if (isDirty) {
+            let obj = await updateNewBodyFooter(f, channel);
+            //f = obj.f;
+            await m.delete();
+            m = obj.footer;
+          } else {
+            let b = await channel.fetchMessage(f.latest_body_id);
+            if (b) {
+              b.edit(await getBodyRenderOfFecht(f, channel));
+            } else {
+               let obj = await updateNewBodyFooter(f, channel);
+              await m.delete();
+              m = obj.footer;
+               
+            }
+          }
+
+           await m.edit(new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.enteringPhase, description:"Get ready..." }));
+
+          // set up new phase based on command
+           phase = getCurrentPhase(f);
+
       
-      break;
+      return;
       case 'turn': // test single turn for phase atm
          message.delete(); 
         if (message.mentions.users.size) {
@@ -1489,9 +1626,10 @@ client.on("message", async (message) => {
             abc[i] = spl.join(":");
           }
 
-          let f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount");
+         
+          f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
 
-          let m = await channel.fetchMessage(f.latest_footer_id);
+          m = await channel.fetchMessage(f.latest_footer_id);
 
           let lastFooterTitle = m.embeds[0].title;
           if (lastFooterTitle === TITLES.turnFor) {
@@ -1508,14 +1646,15 @@ client.on("message", async (message) => {
           }
           */
 
+          // DUplication begins here
           let wasResolution = lastFooterTitle === TITLES.resolution;
 
           if (wasResolution) {
             let allMs = await Manuever.find({channel_id:channel.id}, "message_id");
-            i = allMs.length;
+            let i = allMs.length;
             while(--i > -1) {
               if (!allMs[i].message_id) continue;
-              let am = await channel.fetchMessage(allMs[i].message_id);
+              let am = await channel.fetchMessage(allMs[i].message_id).catch(emptyHandler);
               if (am) {
                 await am.delete().catch(emptyHandler);
                 //await am.clearReactions().catch(errHandler);
@@ -1523,6 +1662,7 @@ client.on("message", async (message) => {
             }
             
           }
+          // duplication ends here
 
           ///*
           let isDirty = await checkChannelDirty(channel, f.latest_footer_id, (m)=> {
@@ -1542,6 +1682,7 @@ client.on("message", async (message) => {
             await m.delete();
             m = obj.footer;
           }
+
           
           phase = getCurrentPhase(f);
          

@@ -22,11 +22,6 @@ const FechtSchema = new Schema(
             required: true,
             //default: 0
         },
-        json: {
-            type: String,
-            required: true,
-            trim: true
-        },
         phaseCount: {
             type: Number,
             default: 0
@@ -50,6 +45,10 @@ const FechtSchema = new Schema(
             type: Number,
             default: 0
          },
+        backtrackCount: {
+            type: Number,
+            default:0
+        },
         /*
         initArray: [{
                 type: Schema.Types.ObjectId,
