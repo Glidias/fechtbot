@@ -84,6 +84,14 @@ function getCarryOnMsg() {
   return "GM may: "+getTurnOptions()+" / `!p >` to carry on.";
 }
 
+function getAuthorUserDisplayName(handle) {
+  if (handle.startsWith(OUTGAME_PREFIX)) {
+    handle = handle.slice(OUTGAME_PREFIX.length);
+  }
+  handle = handle.split(":")[0].trim();
+  return handle;
+}
+
 function isBotEmbed(m) {
   if (!m.embeds || !m.embeds[0]) return false;
   let color = m.embeds[0].color;
@@ -134,6 +142,13 @@ async function updateBodyWithFecht(f, channel, alwaysShowSides, purgeInvalidChar
   if (b) {
     return b.edit(await getBodyRenderOfFecht(f, channel, alwaysShowSides, purgeInvalidCharStates));
   }
+}
+
+async function deleteDataFromChannel(channel) {
+  await User.deleteMany({channel_id:channel.id}).catch(errHandler);
+  await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
+  await Manuever.deleteMany({channel_id:channel.id}).catch(errHandler);
+  await CharacterState.deleteMany({channel_id:channel.id}).catch(errHandler);
 }
 
 function getRoster(roster) {
@@ -1073,6 +1088,17 @@ client.on("messageReactionRemove", (messageReaction, user) => {
 });
 */
 
+client.on("channelDelete", async (channel) => {
+  if (CHANNELS_FECHT[channel.id] !== undefined) {
+    if (!CHANNELS_FECHT[channel.id]) return;
+  } else {
+    let f = await Fecht.findOne({channel_id: channel.id}, "_id").catch(errHandler);
+    if (f) {
+      await deleteDataFromChannel(channel);
+    }
+  }
+});
+
 client.on("messageReactionAdd", async (messageReaction, user) => {
   if (user.bot) {
     return;
@@ -1101,6 +1127,12 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         }
         messageReaction.message.delete().catch(emptyHandler);
         return;
+      } else if (messageReaction.message.embeds && messageReaction.message.embeds.length && messageReaction.message.embeds[0].author) {
+         let tryMember = messageReaction.message.channel.members.get(user.id);
+          if (messageReaction.message.embeds && messageReaction.message.embeds[0].author && getAuthorUserDisplayName(messageReaction.message.embeds[0].author.name) === tryMember.displayName) {
+            messageReaction.message.delete().catch(emptyHandler);
+             return;
+          }
       }
     }
 
@@ -1312,11 +1344,7 @@ client.on("message", async (message) => {
         if (f) {
           let fid = f.latest_footer_id;
           await f.delete().catch(errHandler);
-          await User.deleteMany({channel_id:channel.id}).catch(errHandler);
-          await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
-          await Manuever.deleteMany({channel_id:channel.id}).catch(errHandler);
-          await CharacterState.deleteMany({channel_id:channel.id}).catch(errHandler);
-
+          await deleteDataFromChannel(channel);
           await channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
           CHANNELS_FECHT[channel.id] = null;
           await cleanupFooter(fid, channel);
@@ -1385,7 +1413,7 @@ client.on("message", async (message) => {
            sendTempMessage("Failed to parse Phase JSON for test", channel);
            break;
         }
-        Fecht.findOneAndUpdate({channel_id: channel.id}, {phaseCount:1, phases:Array.isArray(parsedJSON) ? parsedJSON : [parsedJSON]}, {new:true}).then((f)=> {
+        Fecht.findOneAndUpdate({channel_id: channel.id}, {phaseCount:0, phases:Array.isArray(parsedJSON) ? parsedJSON : [parsedJSON]}, {new:true}).then((f)=> {
           if (f) {
            channel.fetchMessage(f.pin_header_id).then((m)=> { 
              m.edit(getHeaderRenderOfFecht(f)) 
