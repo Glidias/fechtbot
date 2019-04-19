@@ -16,6 +16,7 @@ const { Fecht } = require('./server/model/Fecht');
 const { User } = require('./server/model/User');
 const { DMReact } = require('./server/model/DMReact');
 const { Manuever } = require('./server/model/Manuever');
+const { CharacterState } = require('./server/model/CharacterState');
 const {sendTempMessage, sendTempMessageDM, stripSpaces, TEMP_NOTIFY_PREFIX} = require('./server/modules/general');
 const {getSortingFunctionOf, getSortMethodsForField} = require('./server/modules/sorting');
 const SORT_MANUEVERS = getSortMethodsForField("slot");
@@ -124,6 +125,21 @@ function replaceInlineRollMatches(t, r) {
   return results ? "**"+r.replace(/\\/g, "\\\\")+"** `"+results+"`" : "!\\`"+r+"\\`";
 }
 
+function getRosterTag(c) {
+  return "• "+c.mention;
+}
+
+async function updateBodyWithFecht(f, channel, alwaysShowSides, purgeInvalidCharStates) {
+  let b = await channel.fetchMessage(f.latest_body_id);
+  if (b) {
+    return b.edit(await getBodyRenderOfFecht(f, channel, alwaysShowSides, purgeInvalidCharStates));
+  }
+}
+
+function getRoster(roster) {
+  return roster.map(getRosterTag).join("\n");
+}
+
 async function updateNewBodyFooter(f, channel, miscTurnCount) {
   let oldBodyId = f.latest_body_id;
   let oldFooterId = f.latest_footer_id;
@@ -161,28 +177,10 @@ function getInlineRolls(contents) {
   return contents.replace(new RegExp(INLINE_ROLL_REGSTR, "g"), replaceInlineRollMatches);
 }
 
-async function editManueverMsg(message) {
-  let content = message.content.split("\n")[0];
-
-  let split = content.split(RESOLVE_MENTION_SPLIT);
-  
-  let dec = decomposeMention(split[1]);
- 
-  let splits2 = split[0].split(" ");
-  //splits2[1] = " *"+splits2[1]+"* ";
-  splits2.shift();
-  let slot = parseFloat(splits2[0]);
-
-  // to validate if slot is relavant!
-
-  await Manuever.deleteOne({channel_id:message.channel.id, slot:slot})
-  let str =  splits2.join(" ");
-  //console.log(str);
-  //str.replace(SYMBOLS.dice, ":");
-  let rem = isValidManeverExpr(str);
-  rem.handle = dec.handle;
-  return rem;
+function getResolveMsgStrOfManuever(man) {
+  return "!e "+man.slot + ". " + man.label + (man.roll ? " "+":"+" "+man.roll : "") + (man.comment ? " # "+man.comment : "") + RESOLVE_MENTION_SPLIT+man.mention;
 }
+
 
 async function deleteResolvableMsg(message) {
   let split = message.content.split(RESOLVE_MENTION_SPLIT);
@@ -191,6 +189,46 @@ async function deleteResolvableMsg(message) {
   splits2.shift();
   let slot = parseFloat(splits2[0]);
   return await Manuever.deleteOne({channel_id:message.channel.id, slot:slot});
+}
+
+
+async function editResolvableMsg(message) {
+  let messageContent = message.content.split("\n")[0];
+  let split = messageContent.split(RESOLVE_MENTION_SPLIT);
+
+  let splits2 = split[0].split(" ");
+  //splits2[1] = " *"+splits2[1]+"* ";
+  splits2.shift();
+  let slot = parseFloat(splits2[0]);
+  // verify slot, get message from slot if available
+  let m = await Manuever.findOne({channel_id: message.channel.id, slot:slot});
+  if (!m) {
+    sendTempMessage("Edit error :: Slot could not be found : "+slot, message.channel);
+    return {error:ERROR_SLOT};
+  }
+  let dec = decomposeMention(m.mention);
+  let msg;
+  if (!m.message_id || !(msg = await message.channel.fetchMessage(m.message_id).catch(errHandler)) ) {
+    sendTempMessage("Edit error :: Could not find message to edit", message.channel);
+    return {error:ERROR_SLOT};
+  }
+
+  splits2.shift();
+  let str =  splits2.join(" ");
+  //console.log(str);
+  //str.replace(SYMBOLS.dice, ":");
+  let rem = isValidManeverExpr(str);
+  rem.handle = dec.handle;
+  if (rem.error) {
+     sendTempMessage("Edit error :: "+rem.error, message.channel);
+  } else {  
+    let obj = await getManueverObj(rem, false, message.channel, m.mention);
+    obj.slot = slot;
+    await msg.edit(getResolveMsgStrOfManuever(obj));
+
+    // sendTempMessage("Manuever at slot (*"+slot+"*) edited.", message.channel);
+  }
+  return rem;
 }
 
 async function rollResolvableMsg(message) {
@@ -209,7 +247,7 @@ async function rollResolvableMsg(message) {
   //console.log(str);
   //str.replace(SYMBOLS.dice, ":");
   let rem = isValidManeverExpr(str);
-
+  
   rem.handle = dec.handle;
   return await rollMessageFinal(message, rem, dec.id, slot);
 }
@@ -252,8 +290,8 @@ async function rollManuever(manuever, channel) {
   if (manuever.roll) {
     msg += " `"+manuever.roll+"`";
   }
-  if (manuever.comments) {
-    msg += " *# "+manuever.comments+"*"
+  if (manuever.comment) {
+    msg += " *# "+manuever.comment+"*";
   }
   if (manuever.roll) {
     let results = DICE.roll(manuever.roll);  
@@ -275,8 +313,8 @@ async function rollManuever2(manuever, channel) {
   if (manuever.roll) {
     msg += " `"+manuever.roll+"`";
   }
-  if (manuever.comments) {
-    msg += " *# "+manuever.comments+"*"
+  if (manuever.comment) {
+    msg += " *# "+manuever.comment+"*"
   }
   if (manuever.roll) {
     let results = DICE.roll(manuever.roll);  
@@ -689,7 +727,7 @@ function getHeaderRenderOfFecht(f) {
 
 // currently limited to 25 fields.
 
-async function getBodyRenderOfFecht(f, channel) { 
+async function getBodyRenderOfFecht(f, channel, alwaysShowSides, purgeInvalidCharStates) { 
  var embed = new Discord.RichEmbed();
  var i;
  var len;
@@ -701,14 +739,92 @@ async function getBodyRenderOfFecht(f, channel) {
  embed.color = COLOR_MAIN;
  var gmLabel = f.gamemaster_id && channel.members.get(f.gamemaster_id) ? "<@"+f.gamemaster_id+">" : "-"; 
  embed.description = GM_PREFIX+" "+gmLabel;
- 
- var fieldCount = 0;
- len = f.sides.length;
+
+
+var genesis = f.phaseCount === 0 && f.initStep === 0 && f.miscTurnCount === 0 && f.roundCount === 0;
+
+var fieldCount = 0;
+
+
+var hashTeams = {};
+var characterStates = await CharacterState.find({fecht:f._id});
+
+len = characterStates.length;
+
+if (purgeInvalidCharStates) {
+  let purgedStates = [];
+  let chkSet = new Set(f.sides);
+  for (i=0; i< len; i++) {
+    let state = characterStates[i];
+    if (!chkSet.has(state.side)) {
+      await state.delete();
+    } else {
+      purgedStates.push(state);
+    }
+  }
+  characterStates = purgedStates;
+  //console.log("CLEANED UP:"+characterStates.length);
+}
+
+len = characterStates.length;
+
+for (i=0; i< len; i++) {
+  let state = characterStates[i];
+  let sideName = state.side;
+  if (!hashTeams[sideName]) hashTeams[sideName] = [state];
+  else hashTeams[sideName].push(state);
+}
+
+
+
+len = f.sides.length;
+if (genesis || alwaysShowSides) {
  for (i =0; i< len; i++) {
-  if (fieldCount >= 25) return;
-  embed.addField(f.sides[i], "- \n*empty*\n -", true);
-  fieldCount++;
- }
+    if (fieldCount >= 25) return;
+    let sideName = f.sides[i];
+    embed.addField(sideName, hashTeams[sideName] ? getRoster(hashTeams[sideName]) : "*::*", true);
+    fieldCount++;
+  }
+} else {
+   let sideCount = 0;
+   let multiCount = 0;
+   let multiTeam;
+   let singleTeam = null;
+   let singleTeam2 = null
+   for (i =0; i< len; i++) {
+    let sideName = f.sides[i];
+    if (hashTeams[sideName]) {
+      sideCount++;
+      if (hashTeams[sideName].length >= 2) {
+        multiTeam = sideName;
+        multiCount++;
+      } else {
+        if (singleTeam === null) singleTeam = sideName;
+        else singleTeam2 = sideName;
+      }
+    }
+   }
+    if (sideCount === 1 && multiCount === 0) {  // 1 vx ?
+      embed.description += "\n"+ getRoster(hashTeams[singleTeam]) + " *`vs`* " + "?";
+    } else if (sideCount === 2 && multiCount === 1) {  // 1 vx X
+       embed.description += "\n"+ getRoster(hashTeams[singleTeam]) + " *`vs`*";
+       embed.addField(multiTeam, getRoster(hashTeams[multiTeam]), true); 
+       fieldCount++;
+    } else if (sideCount ===2 && multiCount === 0) { // 1 vs 1
+       embed.description += "\n"+ getRoster(hashTeams[singleTeam]) + "  *`vs`*  " + getRoster(hashTeams[singleTeam2]) ;
+    } else {
+      len - f.sides.length;
+       for (i =0; i< len; i++) {
+        if (fieldCount >= 25) return;
+          let sideName = f.sides[i];
+          if (hashTeams[sideName]) {
+            embed.addField(sideName, getRoster(hashTeams[sideName]), true); 
+            fieldCount++;
+          }
+        }
+    }
+
+}
 
  let strikeThru;
  let m;
@@ -1149,7 +1265,7 @@ client.on("message", async (message) => {
   if (message.content.startsWith(PREFIX)) {
     var contentIndex = message.content.indexOf(" ");
     var command = contentIndex >= 0 ? message.content.slice(1, contentIndex) : message.content.slice(1);
-    var remainingContents = contentIndex>=0 ? message.content.slice(contentIndex+1) : null;
+    var remainingContents = contentIndex>=0 ? message.content.slice(contentIndex+1) : "";
     if (remainingContents) remainingContents = remainingContents.trim();
     var channel = message.channel;
 
@@ -1199,7 +1315,8 @@ client.on("message", async (message) => {
           await User.deleteMany({channel_id:channel.id}).catch(errHandler);
           await DMReact.deleteMany({channel_id:channel.id}).catch(errHandler);
           await Manuever.deleteMany({channel_id:channel.id}).catch(errHandler);
-          
+          await CharacterState.deleteMany({channel_id:channel.id}).catch(errHandler);
+
           await channel.send(new Discord.RichEmbed({color:COLOR_GAMEOVER, description:"-- FECHT OVER! We have ended! --"}));
           CHANNELS_FECHT[channel.id] = null;
           await cleanupFooter(fid, channel);
@@ -1247,6 +1364,8 @@ client.on("message", async (message) => {
     let f;
     let m;
     let phase;
+    let handle;
+    
 
     // Fecht only commands
     switch(command) {
@@ -1258,6 +1377,9 @@ client.on("message", async (message) => {
         }
         try {
           var parsedJSON = JSON.parse(remainingContents);
+          if ( !(typeof parsedJSON === "object" || Array.isArray(parsedJSON)) ) {
+            throw "invalid type of parsed json: " + (typeof parsedJSON);
+          }
         }
         catch( err) {
            sendTempMessage("Failed to parse Phase JSON for test", channel);
@@ -1296,7 +1418,8 @@ client.on("message", async (message) => {
 
       let isGm = m.embeds[0].title !== TITLES.turnFor && message.author.id === f.gamemaster_id;
       let isOutgame = false;
-      let handle = "";
+      handle = "";
+
 
       let invalidHandle = false;
     
@@ -1310,14 +1433,19 @@ client.on("message", async (message) => {
             message.delete();
             return;
           } else {
-            if (remainingContents.startsWith(":")) {
-              let li = remainingContents.indexOf(" ");
-              if (li >=0) {
-                handle = remainingContents.slice(1, li);
-                remainingContents = remainingContents.slice(li);
-                if (remainingContents) remainingContents.trim();
-                else remainingContents = "";
-              }
+            // duplicate
+            if (remainingContents.startsWith(":") && remainingContents.charAt(1)!=":") {
+                // duplciate
+                let li = remainingContents.indexOf(" ");
+                if (li >=0) {
+                  handle = remainingContents.slice(1, li);
+                  remainingContents = remainingContents.slice(li) || "";
+                  remainingContents = remainingContents.trim();
+                } else {
+                  handle = remainingContents.slice(1) || "";
+                  remainingContents = "";
+                }
+      
               if (handle && !userCharHash.hash["<@"+message.member.user.id+">"+":"+handle]) {
                 isGm = false;
                 isOutgame = true;
@@ -1416,8 +1544,7 @@ client.on("message", async (message) => {
           let msgArray = [];
           for (i=0; i<len; i++) {
             let man = manuevers[i];
-            let msg = await channel.send("!e "+man.slot + ". " + man.label + (man.roll ? " "+":"+" "+man.roll : "") + (man.comment ? " # "+man.comment : "") + RESOLVE_MENTION_SPLIT+man.mention);
-            // assige message_id to Manuever for saving?
+            let msg = await channel.send(getResolveMsgStrOfManuever(man));
             if (msg) {
               await Manuever.updateOne({_id:man._id}, {message_id:msg.id});
               msgArray.push(msg);
@@ -1457,10 +1584,108 @@ client.on("message", async (message) => {
 
         await checkAndReactMessage(message, m);
       return;
+       case 'sides-purge':
+       case 'sides-hide':
+         message.delete();
+          f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
+          if (message.author.id !== f.gamemaster_id) {
+            return;
+          }
+          updateBodyWithFecht(f, channel, false, command === "sides-purge");
+       return;
+      case 'sides':
+        message.delete();
+         f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
+        if (message.author.id !== f.gamemaster_id) {
+          return;
+        }
+
+        
+        if (remainingContents) {
+          let sides;
+          try {
+            sides = JSON.parse(remainingContents);
+            if (!Array.isArray(sides)) {
+              throw new Error("Sides JSON isn't array: "+typeof(sides));
+            }
+          } catch(err) {
+            sendTempMessage("Failed to parse JSON sides array", channel);
+            return;
+          }
+          if (sides) f.sides = sides;
+          await f.save();
+        }
+
+       updateBodyWithFecht(f, channel, true);
+
+      return;
+      //case 'delete':
+      case   'join':
+        message.delete();
+
+        f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
+        handle = "";
+
+      
+        if (message.mentions.users.size) {
+          if (message.author.id !== f.gamemaster_id) {
+            sendTempMessage(getMentionChar(message.author.id, "")+" Only GMs can mention other players to join a side!")
+            return;
+          }
+
+          let side = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "").trim();
+          getCharNameRegMatches(remainingContents).forEach(async (mention)=> {
+           
+            await CharacterState.updateOne({fecht: f._id, mention:mention}, {
+              channel_id: channel.id,
+              fecht: f._id,
+              mention: mention,
+              side: side
+            }, {upsert: true, setDefaultsOnInsert: true});
+          });
+
+          await updateBodyWithFecht(f, channel, true)
+          return;
+        }
+       
+
+         // duplciate
+        if (remainingContents.startsWith(":") && remainingContents.charAt(1)!=":") {
+          let li = remainingContents.indexOf(" ");
+          if (li >=0) {
+            handle = remainingContents.slice(1, li);
+            remainingContents = remainingContents.slice(li) || "";
+            remainingContents = remainingContents.trim();
+          } else {
+            handle = remainingContents.slice(1) || "";
+            remainingContents = "";
+          }
+      }
+       
+        if (!remainingContents) {
+          sendTempMessage(getMentionChar(message.author.id, handle)+(" please specify the side name to join!"), channel);
+          return;
+        }
+
+        let side = remainingContents;
+        
+        let mention = getMentionChar(message.author.id, handle);
+        let updateResult = await CharacterState.updateOne({fecht: f._id, mention:mention}, {
+            channel_id: channel.id,
+           fecht: f._id,
+            mention: mention,
+            side: side
+          }, {upsert: true, setDefaultsOnInsert: true});
+
+         
+          updateBodyWithFecht(f, channel, true)
+  
+      return;
+      case 'e':
+          await editResolvableMsg(message);
+      break;
       case 'p':
         message.delete();
-       
-  
          f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
          if (!remainingContents) {
           if (f.phases && f.phases.length ) sendTempMessage("List of phases:\n" + f.phases.map((p,i)=>"*"+(i+1)+"*. "+p.name).join("\n"), channel);

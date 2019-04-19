@@ -4,7 +4,7 @@ const Schema = mongoose.Schema;
 
 const CharacterStateSchema = new Schema(
     {
-        user_id_handle: {
+        mention: {
             type: String,
             required: true	
         },
@@ -13,13 +13,17 @@ const CharacterStateSchema = new Schema(
             required: true,
             ref: 'Fecht'
         },
+        channel_id: {
+            type: String,
+            required: true
+        },
         dead: {
             type: Number,
             default: 0
         },
         side: {
-            type: Number,
-            default: 0
+            type: String,
+            default: ""
         },
         initVal: {
             type: Number,
@@ -31,7 +35,7 @@ const CharacterStateSchema = new Schema(
         },
         character: {
             type: Schema.Types.ObjectId,
-            required: true,
+            required: false,    // temporary for now
             ref: 'Character'
         }
     }
