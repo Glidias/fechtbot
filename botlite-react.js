@@ -108,8 +108,8 @@ async function getCompletedReactMessages(footerMessage, channel, linesRequired) 
 function tryToReadEmojis(contents) {
     var spl = contents.split("#");
     //1d10\\:rage: 2d10\\:mask: 3d10\\:hushed: 
-    spl[0] = spl[0].trim().split(" ");
-    if (spl[1]) spl[1] = spl[1].trim().split(" ");
+    spl[0] = spl[0].trim().split(" ").filter(s=>!!s);
+    if (spl[1]) spl[1] = spl[1].trim().split(" ").filter(s=>!!s);
     if (spl[0].length ===0 || (spl[1] && spl[1].length===0)) {
         return null;
     }
