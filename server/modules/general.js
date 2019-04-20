@@ -6,6 +6,12 @@ function deleteMessage(message) {
     });
 }
 
+async function asyncForEach(array, callback) {
+  for (let index = 0; index < array.length; index++) {
+    await callback(array[index], index, array);
+  }
+}
+
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -52,6 +58,7 @@ module.exports = {
     delayedDelete: delayedDelete,
     deleteMessage: deleteMessage,
     stripSpaces: stripSpaces,
-    TEMP_NOTIFY_PREFIX: TEMP_NOTIFY_PREFIX
+    TEMP_NOTIFY_PREFIX: TEMP_NOTIFY_PREFIX,
+    asyncForEach: asyncForEach
    // sendTempNotification: sendTempNotification
 }
