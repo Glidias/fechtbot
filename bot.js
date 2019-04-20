@@ -1978,16 +1978,15 @@ client.on("message", async (message) => {
     var channel = message.channel;
     if (CHANNELS_FECHT[channel.id] !== undefined) {
       if (!CHANNELS_FECHT[channel.id]) return;
-      else message.delete();
+      else await message.delete();
     } else {
-      Fecht.findOne({channel_id: channel.id}, "_id").then((f)=> {
-        if (f) {
-          message.delete();
+      let f = await Fecht.findOne({channel_id: channel.id}, "_id");
+      if (f) {
           CHANNELS_FECHT[channel.id] = f._id;
+          await message.delete();
         } else {
           CHANNELS_FECHT[channel.id] = null;  
         }
-      });
     }
 
   }
