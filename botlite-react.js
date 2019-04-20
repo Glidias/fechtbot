@@ -43,7 +43,6 @@ const INLINE_ROLL_REGSTR = '`([^`\n]+)`+';
 
 const REACT_MSG_PREFIX = "~~ ";
 
-const PREFIX = process.env.PREFIX;
 const PRIVATE_SALT = process.env.SALT || "xgSw292(RJ*(Rr";
 
 const BUFFER_FETCH = 5;
@@ -105,6 +104,18 @@ async function getCompletedReactMessages(footerMessage, channel, linesRequired) 
   }
   return null;
 }
+
+function tryToReadEmojis(contents) {
+    var spl = contents.split("#");
+    //1d10\\:rage: 2d10\\:mask: 3d10\\:hushed: 
+    spl[0] = spl[0].trim().split(" ");
+    if (spl[1]) spl[1] = spl[1].trim().split(" ");
+    if (spl[0].length ===0 || (spl[1] && spl[1].length===0)) {
+        return null;
+    }
+    return spl.slice(0, 2);
+}
+
 
 function getDMRelayData(message) {
   let contents = message.content.split(ID_SPLITTER)[1];
@@ -187,14 +198,15 @@ async function sendDM(pubChannel, namer, messageReaction, user, dmReacts) {
   let dmsg = await user.send(REACT_MSG_PREFIX+ namer + " " + "please choose " + ID_SPLITTER + "<#"+pubChannel.id+">:"+messageReaction.message.id + "\n`"+JSON.stringify(dmReacts)+ "`");
   let i;
   for (i=0; i<dmReacts.length; i++) {
-    await dmsg.react(decomposeReact(dmReacts[i]).emoticon);
+    await dmsg.react(decomposeReact(dmReacts[i]).emoticon).catch(emptyHandler);
   }
 }
 
 async function messageCheckReactions(message, remainingContents, channel, command) {
   let matches = getCharNameRegMatches(remainingContents);
   if (!matches || !matches.length) {
-    message.reply(TEMP_NOTIFY_PREFIX+"Please mention users/(:characters) for reaction phase!");
+    let suffix = process.env.HELP_LINK_REACT ? "\nRefer to ["+ process.env.HELP_LINK_REACT+"] on usage."  : "";
+    message.reply(TEMP_NOTIFY_PREFIX+"Please mention users/(:characters) for reaction phase and an array/string list of emojis."+suffix);
     return;
   }
 
@@ -202,7 +214,7 @@ async function messageCheckReactions(message, remainingContents, channel, comman
   
   remainingContents= remainingContents.trim();
   if (!remainingContents) {
-    message.reply(TEMP_NOTIFY_PREFIX+"Please supply a JSON array of reactions");
+    message.reply(TEMP_NOTIFY_PREFIX+"Please supply a 2d-array/string list of reactions");
     return;
   }
   let parsedJSON;
@@ -210,14 +222,19 @@ async function messageCheckReactions(message, remainingContents, channel, comman
   try {
     parsedJSON = JSON.parse(remainingContents);
     if ( !(Array.isArray(parsedJSON)) ) {
-      throw new Error("invalid type of parsed json: " + (typeof parsedJSON));
+      throw new Error("invalid type of parsed 2d array/string list of emojis: " + (typeof parsedJSON));
     }
   } catch(err) {
-    message.reply(TEMP_NOTIFY_PREFIX+"Invalid parsed JSON array");
-    return;
+
+    parsedJSON = tryToReadEmojis(remainingContents);
+    if (!parsedJSON) {
+        message.reply(TEMP_NOTIFY_PREFIX+"Invalid parsed 2d-array/string list of emojis");
+        return;
+    }
+    
   }
   if (parsedJSON.length === 0) {
-      message.reply(TEMP_NOTIFY_PREFIX+"Need at least 1 string of reactions");
+      message.reply(TEMP_NOTIFY_PREFIX+"The parsed array of emojis is empty");
     return;
   }
 
@@ -228,10 +245,15 @@ async function messageCheckReactions(message, remainingContents, channel, comman
   
   //[["1d10\\😡","1d10\\😯","1d10\\😷"], ["😡","😯","😷"]]
   let footer;
+  let jsonPreview = "`"+JSON.stringify(parsedJSON)+"`";
+  if (!jsonPreview) {
+    message.reply(TEMP_NOTIFY_PREFIX+"Invalid parsed array/string list of emojis");
+    return;
+  }
   if (dmReacts) {
-      footer = await channel.send(new Discord.RichEmbed({description:matches.length + " of you: Check (DM) direct messages from me AFTER you've tapped your reaction down below:\n"+"`"+JSON.stringify(parsedJSON)+"`"}));
+      footer = await channel.send(new Discord.RichEmbed({description:matches.length + " of you: Check (DM) direct messages from me AFTER you've tapped your reaction down below:\n"+jsonPreview}));
   } else {
-    footer = await channel.send(new Discord.RichEmbed({description:matches.length + " of you: Tap your reactions below:\n"}));
+    footer = await channel.send(new Discord.RichEmbed({description:matches.length + " of you: Tap your reactions below:\n"+jsonPreview}));
   }
 
   // footerId, matches, dmReacts
@@ -248,7 +270,7 @@ async function messageCheckReactions(message, remainingContents, channel, comman
     let m2 = collectArr[i];
     for (k=0; k < reacts.length; k++) {
       let r = decomposeReact(reacts[k]);
-      await m2.react(r.emoticon);
+      await m2.react(r.emoticon).catch(emptyHandler);
     }
   }
 }
@@ -305,10 +327,6 @@ client.on('raw', async packet => {
 
 client.on("messageReactionAdd", async (messageReaction, user) => {
   if (user.bot) {
-    return;
-  }
-
-  if (!messageReaction.message.content.startsWith(REACT_MSG_PREFIX) && !messageReaction.message.content.startsWith(PREFIX)) {
     return;
   }
 
@@ -449,48 +467,19 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
 });
 
 client.on("message", async (message) => {
-  if (message.author.bot || !message.content.startsWith(PREFIX)) {
+  if (message.author.bot || !message.content.startsWith("<@"+client.user.id+">") || message.type === "dm") {
     return;
   }
+  var remainingContents = message.content.trim();
 
-  var contentIndex = message.content.indexOf(" ");
-  var command = contentIndex >= 0 ? message.content.slice(1, contentIndex) : message.content.slice(1);
-  var remainingContents = contentIndex>=0 ? message.content.slice(contentIndex+1) : "";
-  if (remainingContents) remainingContents = remainingContents.trim();
-  else remainingContents = "";
-
-  var channel = message.channel;
-
-  // Commands for both DM and non DM channels
-
-  switch(command) {
-    case 'roll':
-    case 'rolli':
-    case 'r':
-    case 'ri':
-    case 'say':
-    case 's': 
-    
-    return;
-    case 'react': break;
-    default: return;
-  }
-  
-
-  if (channel.type === "dm") {
-    message.reply("Not here dude...this is a DM channel..");;
-    return;
-  }
-
-  if (command === 'react') {
-    messageCheckReactions(message, remainingContents, channel, command);
-  }
-
+  remainingContents = remainingContents.replace( new RegExp("<@"+client.user.id+">", "g"), "");
+  remainingContents = remainingContents.trim();
+  messageCheckReactions(message, remainingContents, message.channel);
 });
 
 
 client.on("ready", () => {
-  console.log("FechtBotLite Online!");
+  console.log("FechtLiter-React Online!");
 });
 
 client.login(process.env.TOKEN);
