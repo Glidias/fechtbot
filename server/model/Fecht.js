@@ -40,22 +40,23 @@ const FechtSchema = new Schema(
             set: v => Math.round(v),
             alias: 'i',
             default: 0
-         },
-         miscTurnCount: {
+        },
+        initArray: [{
+            type: Schema.Types.ObjectId,
+            ref: 'CharacterState'
+        }],
+        initI: {
+            type: Number,
+            default:0
+        },
+        miscTurnCount: {
             type: Number,
             default: 0
-         },
+        },
         backtrackCount: {
             type: Number,
             default:0
         },
-        /*
-        initArray: [{
-                type: Schema.Types.ObjectId,
-                required: true,
-                ref: 'CharacterState'
-        }],
-        */
         sides: [{
             type: String,
             required: true,

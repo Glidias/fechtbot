@@ -80,7 +80,6 @@ function SortMethodsForField(fieldName) {
 
 module.exports = {
     getSortMethodsForField: function(field) {
-
 		return new SortMethodsForField(field).array;
 	},
 	getSortingFunctionOf: function(val, methods) {

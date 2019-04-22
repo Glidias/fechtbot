@@ -17,7 +17,7 @@ const CharacterStateSchema = new Schema(
             type: String,
             required: true
         },
-        dead: {
+        dead: { // 1- Is dead! 2 - Skip turn/inactive for current phase
             type: Number,
             default: 0
         },
@@ -35,7 +35,7 @@ const CharacterStateSchema = new Schema(
         },
         character: {
             type: Schema.Types.ObjectId,
-            required: false,    // temporary for now
+            required: false,    // hmm....is this really needed for 1.0?
             ref: 'Character'
         }
     }

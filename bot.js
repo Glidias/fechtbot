@@ -20,6 +20,7 @@ const { CharacterState } = require('./server/model/CharacterState');
 const {sendTempMessage, sendTempMessageDM, stripSpaces, TEMP_NOTIFY_PREFIX} = require('./server/modules/general');
 const {getSortingFunctionOf, getSortMethodsForField} = require('./server/modules/sorting');
 const SORT_MANUEVERS = getSortMethodsForField("slot");
+const SORT_CHAR_STATES = getSortMethodsForField("initVal");
 
 const {Dice} = require('dice-typescript');
 const DICE = new Dice();
@@ -75,13 +76,13 @@ const DESCS = {
   pleaseWait: "Please wait..."
 };
 
-function getTurnOptions() {
+function getTurnOptions(f) {
   //`!turn >`/
   return "`!turn @[mentions]`";
 }
 
-function getCarryOnMsg() {
-  return "GM may: "+getTurnOptions()+" / `!p >` to carry on.";
+function getCarryOnMsg(f) {
+  return "GM may: "+getTurnOptions(f)+" / `!p >` to carry on.";
 }
 
 function getAuthorUserDisplayName(handle) {
@@ -125,10 +126,172 @@ function tryRoll(roll) {
   return result;
 }
 
+function getValidRollOrNull(roll) {
+  let result = tryRoll(roll);
+  return result && !result.errors.length ? result : null;
+}
+
+async function setupInitiative(channel, message, remainingContents) {
+
+  let isDM = channel.type === "dm";
+       
+  if (!remainingContents) {
+    if (!isDM) message.delete();
+    return;
+  }
+
+  let f;
+  let settingOthersInitiative = false;
+  let scope = "latest_footer_id phases phaseCount gamemaster_id initI initArray";
+  let pubChannel;
+  if (isDM) { // DM channel checks
+    let user = User.findOne({user_id:user_id}).catch(errHandler);
+
+    if (!user || !user.channel_id) {
+      message.reply("You are not connected to any active fecht channel at the moment via reaction check-in/!gmjoin for DM initiative setup to work");
+      return;
+    }
+
+    pubChannel = client.channels.get(user.channel_id);
+    if (!pubChannel) {
+      message.reply("Could not find public channel anymore for the last fecht you were registered in.");
+      return;
+    }
+    f = await Fecht.findOne({channel_id:user.channel_id}, scope).catch(errHandler);
+    if (!f) {
+      message.reply("There seems to be no more fecht in progress at the moment at the channel were last registered in.");
+      return;
+    }
+    if (message.mentions.users.size && f.gamemaster_id !== message.author.id) {
+      message.reply("You need to be a GM of a fecht to control other people's initiatives");
+    }
+  } else {
+    f = await Fecht.findOne({channel_id:channel.id}, scope).catch(errHandler);
+    if (!f) { // Pub Channel checks
+      pingBackMsg(message, "No fecht currently in progress. Use `!fechtstart` to begin");
+      return;
+    }
+    pubChannel = channel;
+
+    if (message.mentions.users.size && (settingOthersInitiative=(message.mentions.users.size >=2 || message.mentions.users.first().id !== message.author.id)) 
+      && f.gamemaster_id !== message.author.id
+    )  {  
+      pingBackMsg(message, "You need to be a fecht GM to control other users's initiatives");
+      return;
+    }
+  }
+
+  let handle = "";
+  let mention = getMentionChar(message.author.id, handle);
+  let charMatches;
+
+  if (message.mentions.users.size) {
+    charMatches =  getCharNameRegMatches(remainingContents);
+    remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
+
+  } else {
+    // duplicate
+    if (remainingContents.startsWith(":") && remainingContents.charAt(1)!=":") {
+      let li = remainingContents.indexOf(" ");
+        if (li >=0) {
+          handle = remainingContents.slice(1, li);
+          remainingContents = remainingContents.slice(li) || "";
+          remainingContents = remainingContents.trim();
+        } else {
+          handle = remainingContents.slice(1) || "";
+          remainingContents = "";
+        }
+        mention = getMentionChar(message.author.id, handle);
+    }
+  }
+  
+  let rSplit = remainingContents.split("\\");
+  let rollFlags = rSplit.length >= 2 ? rSplit[rSplit.length - 1].trim() : "";
+  if (rSplit.length>=2) {
+    rSplit.pop();
+    remainingContents = rSplit.join("\\");
+  }
+  let rollResult = getValidRollOrNull(remainingContents);
+  let useSuccesses = false;
+  let hideResults = false;
+
+  let flagTrace = "";
+  if (rollFlags.includes("s")) {
+    useSuccesses  = true;
+    flagTrace += "s";
+  }
+  if (rollFlags.includes("h")) {
+    hideResults  = true;
+    flagTrace += "h";
+  }
+
+  let resultSort;
+
+  if (flagTrace) flagTrace = "\\"+flagTrace;
+ 
+  if (!rollResult) {
+    pingBackMsg(message, mention+", the initiative dice roll expression is invalid: `"+remainingContents+"`", true);
+    return;
+  }
+  
+  let charState;
+  let phase = getCurrentPhase(f);
+  characterStates = await CharacterState.find({fecht:f._id}).catch(errHandler);
+  if (!characterStates || !characterStates.length) {
+    pingBackMsg(message, "No fechters found at the moment! Please use `!join` to join a side.");
+  }
+  
+  if (message.mentions.users.size) {
+    let characterStates;
+
+
+  } else {
+   
+    charState = characterStates.find(c=>mention===c.mention); // await CharacterState.findOne({fecht:f._id, mention:mention}).catch(errHandler);
+    
+    //characterStates.sort( getSortingFunctionOf(phase.initSort, SORT_CHAR_STATES) );
+    //resultSort = await Fecht.updateOne({_id:f._id}, {initArray:characterStates}).catch(errHandler);
+   
+    if (!charState) {
+      pingBackMsg(message, mention+", we could not find you belonging to this fecht!\nPlease use `!join` to join a side.", true);
+      return;
+    } else {
+      charState.initVal = (!useSuccesses ? rollResult.total : rollResult.successes);
+      await charState.save();
+      if (isDM) {
+        pubChannel.send(mention + " *privately sets own initiative.*");
+      } else {
+        let resultSuffix = "";
+        if (!hideResults) resultSuffix = " : `"+getRollResultsLine(rollResult)+"` => **" + (!useSuccesses ? rollResult.total : rollResult.successes) +"**";
+        pubChannel.send(mention + " *sets own initiative to* "+remainingContents+flagTrace+resultSuffix);
+      }
+      message.delete();
+      return;
+    }
+  }
+
+
+  
+}
+
+function pingBackMsg(message, content, excludeAuthor) {
+  if (message.channel.type !== "dm") {
+    sendTempMessage((!excludeAuthor ? "<@"+message.author.id+">, " : "")+content, message.channel);
+    message.delete();
+  } else {
+    if (!excludeAuthor) message.reply(content);
+    else message.channel.send(content);
+  }
+}
+
+function getRollResultsLine(results) {
+  return stripSpaces(results.renderedExpression) + SYMBOLS.dice +" " + results.successes+"("+results.failures+")" + " = "+results.total;
+}
+
 function replaceInlineRollMatches(t, r) {
   let results = tryRoll(r);
   if (results) {
-    results = stripSpaces(results.renderedExpression) + SYMBOLS.dice +" " + results.successes+"("+results.failures+")" + " = "+results.total;
+    results = getRollResultsLine(results);
   }
   return results ? "**"+r.replace(/\\/g, "\\\\")+"** `"+results+"`" : "!\\`"+r+"\\`";
 }
@@ -153,6 +316,10 @@ async function deleteDataFromChannel(channel) {
 
 function getRoster(roster) {
   return roster.map(getRosterTag).join("\n");
+}
+
+function canAdvanceForward(fecht) {
+  return fecht.initArray && fecht.initI < fecht.initArray.length - 1;
 }
 
 async function updateNewBodyFooter(f, channel, miscTurnCount) {
@@ -677,9 +844,9 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
   /// `!turn >`
   let newFooterContents;
   if (collectArr.length || slotCount) {
-    newFooterContents = new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.turnEnded, description: "GM may: `!res` / `!res all` / "+getTurnOptions()+" / `!p >`"});
+    newFooterContents = new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.turnEnded, description: "GM may: `!res` / `!res all` / "+getTurnOptions(fecht)+" / `!p >`"});
   } else {
-    newFooterContents = new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.resolution, description: getCarryOnMsg()});
+    newFooterContents = new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.resolution, description: getCarryOnMsg(fecht)});
   }
   
   if (fullyCleanedUp) footerMessage.edit(newFooterContents);
@@ -987,7 +1154,7 @@ client.on('raw', async packet => {
             if (userR) sendTempMessageDM("You've already reacted! Can't re-submit!", userR);
             return;
           } else {
-            let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount latest_footer_id latest_body_id sides roundCount initStep miscTurnCount backtrackCount gamemaster_id");
+            let f = await Fecht.findOne({channel_id: u.channel_id}, "phases phaseCount latest_footer_id latest_body_id sides roundCount initStep miscTurnCount backtrackCount gamemaster_id initI initArray");
             if (!f) {
               sendTempMessageDM("The reaction is expired! Can't find fecht channel!", userR);
               return;
@@ -1279,7 +1446,7 @@ client.on("messageReactionAdd", async (messageReaction, user) => {
         messageReaction.remove(user);
       }
     }
-  }, "latest_footer_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount backtrackCount gamemaster_id");
+  }, "latest_footer_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount backtrackCount gamemaster_id initI initArray");
 
 });
 
@@ -1304,7 +1471,7 @@ client.on("message", async (message) => {
     // Fecht start and ending commands
     if (command === "fechtstart" || command === "fechtend") {
       if (channel.type === "dm") {
-        sendTempMessage("Not here dude...this is a DM channel..", channel)
+        message.reply("Not here dude...this is a DM channel..");
         return;
       }
       if (command === "fechtstart") {  
@@ -1368,10 +1535,13 @@ client.on("message", async (message) => {
       return;
     }
 
-
+    if (command === "init") {
+      setupInitiative(channel, message, remainingContents);
+      return;
+    }
 
     if (channel.type === "dm") {
-      sendTempMessage("Not here dude...this is a DM channel..", channel);
+      message.reply("Not here dude...this is a DM channel..");
       return;
     }
 
@@ -1397,6 +1567,10 @@ client.on("message", async (message) => {
 
     // Fecht only commands
     switch(command) {
+      case 'blahblah_init': 
+
+
+      return;
       case 'phases':
       case 'phase': // test single phase setting
         if (!remainingContents) {
@@ -1428,7 +1602,7 @@ client.on("message", async (message) => {
       break;
       case 'skipturnall':
       case 'endturnall':
-        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id gamemaster_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount backtrackCount");
+        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id gamemaster_id latest_body_id sides phases phaseCount roundCount initStep miscTurnCount backtrackCount initI initArray");
         m = await channel.fetchMessage(f.latest_footer_id);
         if (m.embeds[0].title !== TITLES.turnFor) {
           sendTempMessage("Turn has already ended...", channel);
@@ -1546,7 +1720,7 @@ client.on("message", async (message) => {
       case 'res':
         message.delete();
 
-        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id gamemaster_id phases phaseCount");
+        f = await Fecht.findOne({channel_id:channel.id}, "latest_footer_id gamemaster_id phases phaseCount initI initArray");
         m = await channel.fetchMessage(f.latest_footer_id);
         if (m.embeds[0].title !== TITLES.turnEnded) {
           //sendTempMessage("Resolution no longer available!", channel);
@@ -1585,7 +1759,7 @@ client.on("message", async (message) => {
           }
         }
         
-        await m.edit(new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.resolution, description: (remainingContents === "all" ? "" : "GM may: "+SYMBOLS.play+"or `!e` actions!\n")+getCarryOnMsg() }));
+        await m.edit(new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.resolution, description: (remainingContents === "all" ? "" : "GM may: "+SYMBOLS.play+"or `!e` actions!\n")+getCarryOnMsg(f) }));
 
       return;
       case 'r':
@@ -1648,7 +1822,7 @@ client.on("message", async (message) => {
 
       return;
       //case 'delete':
-      case   'join':
+      case 'join':
         message.delete();
 
         f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
@@ -1853,6 +2027,28 @@ client.on("message", async (message) => {
            phase = getCurrentPhase(f);
 
       
+      return;
+      case 't':
+        message.delete();
+        f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI initArray");
+        m = await channel.fetchMessage(f.latest_footer_id);
+
+        let footerTitle = m.embeds[0].title;
+        if (footerTitle === TITLES.turnFor) {
+          //await endTurn(channel, getCurrentPhase(f), m);
+          sendTempMessage("Please end turn first. GM can force this with `!endturnall`/`!skipturnall`.", channel);
+          //message.delete();
+          return;
+        }
+
+        if (!canAdvanceForward(f)) {
+          sendTempMessage("No more turns found in current initiative track!", channel);
+          return;
+        }
+                
+        //phase = getCurrentPhase(f);
+        
+
       return;
       case 'turn': // test single turn for phase atm
          message.delete(); 
