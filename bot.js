@@ -131,7 +131,10 @@ function getValidRollOrNull(roll) {
   return result && !result.errors.length ? result : null;
 }
 
-async function setupInitiative(channel, message, remainingContents) {
+async function setupInitiative(channel, message, remainingContents, command) {
+
+  let commandSpl = command.split("-");
+  let forcePrivate = commandSpl[1] === "p";
 
   let isDM = channel.type === "dm";
        
@@ -224,6 +227,7 @@ async function setupInitiative(channel, message, remainingContents) {
     hideResults  = true;
     flagTrace += "h";
   }
+
 
   let resultSort;
 
@@ -1535,8 +1539,8 @@ client.on("message", async (message) => {
       return;
     }
 
-    if (command === "init") {
-      setupInitiative(channel, message, remainingContents);
+    if (command === "init" || command === "init-p" || command === "init-e") {
+      setupInitiative(channel, message, remainingContents, command);
       return;
     }
 
