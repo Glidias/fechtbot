@@ -191,7 +191,7 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId) {
     if (charStates.findIndex((c)=>c._id===checkCharStateShiftId) !== lastPosition) {
       f.initI--;
       if (f.initI < 0) f.initI = 0;
-      payload.initI = f.initI;
+      payload.initI = f.initI = f.initI;
     }
   }
 
@@ -199,6 +199,7 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId) {
 
 
   let resultSort = await Fecht.updateOne({_id:f._id}, payload).catch(errHandler);
+  f.initArray = payload.initArray;
   //console.log("init table:");
   //console.log(payload.initArray.map((c,i)=>{return {index:i, m: c.mention, val:c.initVal, f: (""+c.initFloat).slice(0,7), c:payload.initI===i} } ));
     
@@ -2240,13 +2241,18 @@ client.on("message", async (message) => {
           return;
         }
 
+       
         let prePhase = isOutsidePhase(m);
+        if (prePhase) {
+          await shuffleInitiatives(f, true)
+        }
 
         if (!canAdvanceForward(f)) {
           sendTempMessage("No more turns found in current initiative track!", channel);
           return;
         }
-                
+
+ 
         //phase = getCurrentPhase(f);
         
 
