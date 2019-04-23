@@ -2201,7 +2201,6 @@ client.on("message", async (message) => {
           }          
 
 
-       
           await f.save();
 
           if (isDirty) {
@@ -2229,7 +2228,7 @@ client.on("message", async (message) => {
       
       return;
       case 't':
-        message.delete();
+       
         f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI initArray");
         m = await channel.fetchMessage(f.latest_footer_id);
 
@@ -2237,7 +2236,7 @@ client.on("message", async (message) => {
         if (footerTitle === TITLES.turnFor) {
           //await endTurn(channel, getCurrentPhase(f), m);
           sendTempMessage("Please end turn first. GM can force this with `!endturnall`/`!skipturnall`.", channel);
-          //message.delete();
+          message.delete();
           return;
         }
 
@@ -2249,13 +2248,21 @@ client.on("message", async (message) => {
 
         if (!canAdvanceForward(f)) {
           sendTempMessage("No more turns found in current initiative track!", channel);
+          message.delete();
           return;
         }
 
- 
-        //phase = getCurrentPhase(f);
-        
+        if (!prePhase) {
+          // todo: advance turn forward
+          
+          // depending on how many in turns gathered,
+          // alter remainingContents so that it can carry over turn case instead of return
+          //f.initI++;
 
+          
+          //Fecht.updateOne({_id:f._id}, {initI:f.initI});
+        }
+ 
       return;
       case 'turn': // test single turn for phase atm
          message.delete(); 
