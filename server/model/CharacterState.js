@@ -25,7 +25,19 @@ const CharacterStateSchema = new Schema(
             type: String,
             default: ""
         },
+        initExpr: {
+            type: String,
+            default: "0"
+        },
+        initNegative: {
+            type: Boolean,
+            default: false
+        },
         initVal: {
+            type: Number,
+            default: 0
+        },
+        initFloat: {
             type: Number,
             default: 0
         },

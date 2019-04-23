@@ -111,9 +111,17 @@ const FechtSchema = new Schema(
                 trim: true,
                 default: ""
             }],
+            floatUseCharInitInt: {
+                type: Boolean,
+                default: false
+            },
             initReact: {
                 type: Number,
                 default: 0
+            },
+            initIncludeZero: {
+                type: Boolean,
+                default: false
             },
             initSort: {
                 type: Number,

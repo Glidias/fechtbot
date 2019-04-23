@@ -20,7 +20,7 @@ const { CharacterState } = require('./server/model/CharacterState');
 const {sendTempMessage, sendTempMessageDM, stripSpaces, TEMP_NOTIFY_PREFIX} = require('./server/modules/general');
 const {getSortingFunctionOf, getSortMethodsForField} = require('./server/modules/sorting');
 const SORT_MANUEVERS = getSortMethodsForField("slot");
-const SORT_CHAR_STATES = getSortMethodsForField("initVal");
+const SORT_CHAR_STATES = getSortMethodsForField("initVal", "initFloat");
 
 const {Dice} = require('dice-typescript');
 const DICE = new Dice();
@@ -69,7 +69,8 @@ const TITLES = {
   resolvingPlays: ".. Resolving plays ..",
   settingUpResolvePlays: ".. Setting up resolve plays ..",
   resolution: ":: Resolution of Plays ::",
-  enteringPhase: ":: Entering new phase ::"
+  enteringPhase: ":: Entering new phase ::",
+  enteringPhaseInitRevealed: ":: Initiatives revealed for new phase ::"
 };
 
 const DESCS = {
@@ -79,6 +80,10 @@ const DESCS = {
 function getTurnOptions(f) {
   //`!turn >`/
   return "`!turn @[mentions]`";
+}
+
+function isOutsidePhase(footerMessage) {
+  return footerMessage.embeds[0].title === TITLES.enteringPhase || !footerMessage.embeds[0].title;
 }
 
 function getCarryOnMsg(f) {
@@ -131,11 +136,96 @@ function getValidRollOrNull(roll) {
   return result && !result.errors.length ? result : null;
 }
 
+async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId) {
+  let charStates = await CharacterState.find({fecht:f._id});
+  let phase = getCurrentPhase(f);
+
+
+  let lastPosition = -1;
+  if (checkCharStateShiftId) {
+    lastPosition = f.initArray.findIndex((c)=>c._id === checkCharStateShiftId);
+  }
+
+  let i;
+  let c;
+  let splOptions;
+  let floatUseCharInitInt = phase.floatUseCharInitInt;
+
+  let cInitExprVal;
+
+  if (enteringPhase) {
+    i = charStates.length;
+    while(--i > -1) {
+      c = charStates[i];
+      splOptions = c.initExpr.split("\\");
+      let result = DICE.roll(c.initExpr);
+      cInitExprVal = splOptions[1] && splOptions[1].includes("s") ? result.successes : result.total;
+      if (c.initNegative && c.initVal > 0) {
+        cInitExprVal = -c.initVal;
+      }
+      c.initFloat = Math.random();
+      c.initVal = cInitExprVal;
+
+      if (phase.initReact || phase.initVal) {
+        if (phase.initVal) {
+          c.initVal = phase.initVal; 
+        } 
+        if (phase.initReact) {
+          c.initVal = c.initReact || phase.initVal;
+        }
+        c.initFloat += floatUseCharInitInt ? parseInt(cInitExprVal) : 0;
+      }
+
+      await c.save();
+    }
+  }
+  
+  if (!phase.initIncludeZero) {
+    charStates = charStates.filter(c=>c.initVal!==0);
+  }
+
+  charStates.sort( getSortingFunctionOf(phase.initSort, SORT_CHAR_STATES) );
+  let payload = {initArray:charStates};
+  if (checkCharStateShiftId) {
+    // backtrack initiative counter if position in array has shifted
+    if (charStates.findIndex((c)=>c._id===checkCharStateShiftId) !== lastPosition) {
+      f.initI--;
+      if (f.initI < 0) f.initI = 0;
+      payload.initI = f.initI;
+    }
+  }
+
+  // initI
+
+
+  let resultSort = await Fecht.updateOne({_id:f._id}, payload).catch(errHandler);
+  //console.log("init table:");
+  //console.log(payload.initArray.map((c,i)=>{return {index:i, m: c.mention, val:c.initVal, f: (""+c.initFloat).slice(0,7), c:payload.initI===i} } ));
+    
+  return payload;
+}
+
+function getFlippedInitVal(current, instruct) {
+  if (instruct === "+") {
+    current = current < 0 ? -current : current;
+  } else if (instruct === "-") {
+    current = current > 0 ? -current : current;
+  } else {
+    current = -current;
+  }
+  return current;
+}
+
+/**
+ * 
+ * @param {Discord.TextChannel} channel 
+ * @param {Discord.Message} message 
+ * @param {string} remainingContents 
+ * @param {string} command 
+ */
 async function setupInitiative(channel, message, remainingContents, command) {
 
-  let commandSpl = command.split("-");
-  let forcePrivate = commandSpl[1] === "p";
-
+  let usingTempInit = command === "init-t";
   let isDM = channel.type === "dm";
        
   if (!remainingContents) {
@@ -176,7 +266,7 @@ async function setupInitiative(channel, message, remainingContents, command) {
     }
     pubChannel = channel;
 
-    if (message.mentions.users.size && (settingOthersInitiative=(message.mentions.users.size >=2 || message.mentions.users.first().id !== message.author.id)) 
+    if ( (message.mentions.users.size && (settingOthersInitiative=(message.mentions.everyone || message.mentions.users.size >=2 || message.mentions.users.first().id !== message.author.id)) ) 
       && f.gamemaster_id !== message.author.id
     )  {  
       pingBackMsg(message, "You need to be a fecht GM to control other users's initiatives");
@@ -184,14 +274,30 @@ async function setupInitiative(channel, message, remainingContents, command) {
     }
   }
 
+  let footerMessage = await pubChannel.fetchMessage(f.latest_footer_id);
+
+  let preEnterPhase = isOutsidePhase(footerMessage);
+  if (preEnterPhase && usingTempInit) {
+    pingBackMsg(message, "We are not *inside* a phase yet to use the `-t` suffix flag!");
+    return;
+  }
   let handle = "";
   let mention = getMentionChar(message.author.id, handle);
   let charMatches;
+  let characterStates;
 
-  if (message.mentions.users.size) {
-    charMatches =  getCharNameRegMatches(remainingContents);
+  if (message.mentions.users.size || message.mentions.everyone) {
+    if (message.mentions.everyone) {
+      characterStates = await CharacterState.find({fecht:f._id}).catch(errHandler);
+      if (!characterStates || !characterStates.length) {
+        pingBackMsg(message, "No fechters found at the moment! Please use `!join` to join a side.");
+        return;
+      }
+      charMatches = characterStates.map((c=>c.mention));
+      remainingContents = remainingContents.replace(/@everyone/g, "");
+    } else charMatches =  getCharNameRegMatches(remainingContents);
     remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
-
+    remainingContents = remainingContents.trim();
   } else {
     // duplicate
     if (remainingContents.startsWith(":") && remainingContents.charAt(1)!=":") {
@@ -213,7 +319,10 @@ async function setupInitiative(channel, message, remainingContents, command) {
   if (rSplit.length>=2) {
     rSplit.pop();
     remainingContents = rSplit.join("\\");
+    remainingContents = remainingContents.trim();
   }
+
+
   let rollResult = getValidRollOrNull(remainingContents);
   let useSuccesses = false;
   let hideResults = false;
@@ -228,46 +337,135 @@ async function setupInitiative(channel, message, remainingContents, command) {
     flagTrace += "h";
   }
 
-
   let resultSort;
+  let polarityChange = false;
 
   if (flagTrace) flagTrace = "\\"+flagTrace;
  
   if (!rollResult) {
-    pingBackMsg(message, mention+", the initiative dice roll expression is invalid: `"+remainingContents+"`", true);
-    return;
+   
+
+    if (remainingContents === "+" || remainingContents === "-" || remainingContents === "~") {
+      rollResult = { renderedExpression: remainingContents, total:0, successes:0, failures:0 };
+      polarityChange = true;
+    } else {
+      pingBackMsg(message, mention+", the initiative dice roll expression is invalid: `"+remainingContents+"`", true);
+      return;
+    }
   }
-  
+
   let charState;
   let phase = getCurrentPhase(f);
-  characterStates = await CharacterState.find({fecht:f._id}).catch(errHandler);
+  if (!characterStates) characterStates = await CharacterState.find({fecht:f._id}).catch(errHandler);
   if (!characterStates || !characterStates.length) {
     pingBackMsg(message, "No fechters found at the moment! Please use `!join` to join a side.");
+    return;
   }
-  
-  if (message.mentions.users.size) {
-    let characterStates;
+
+  let prefixer = !usingTempInit ? "|" : "|only for this phase: ";
+  let descAction = !usingTempInit ? "sets" : "shifts";
+  let descInit = !usingTempInit ? "default initiative" : "initiative";
+  if (message.mentions.users.size || message.mentions.everyone) {
+    let userCharHash = getUserCharHash(charMatches);
 
 
+    let charAvailMentionMap = new Set(characterStates.map(c=>c.mention));
+    let missingArr = charMatches.filter(m=>!charAvailMentionMap.has(m));
+
+    characterStates = characterStates.filter((c)=>{
+      return !!userCharHash.hash[c.mention];
+    });
+
+    if (characterStates.length) {
+      if (!usingTempInit) {
+        let i = characterStates.length;
+        while(--i > -1) {
+          characterStates[i].initExpr = remainingContents.split("\\")[0] + flagTrace;
+          await characterStates[i].save();
+        }
+      } else {
+        pingBackMsg(message, "Sorry we don't support bulk setting/shuffling of initiatives while a phase is in progress!");
+        return;
+      }
+   
+
+      await pubChannel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set as:* `"+remainingContents+flagTrace+"`");
+    }
+
+    if (missingArr.length) {
+      pingBackMsg(message, missingArr.join(", ") + " *aren't joined to the fecht yet and cannot set initiative!*", true);
+      return;
+    }
+
+    message.delete();
   } else {
-   
     charState = characterStates.find(c=>mention===c.mention); // await CharacterState.findOne({fecht:f._id, mention:mention}).catch(errHandler);
-    
-    //characterStates.sort( getSortingFunctionOf(phase.initSort, SORT_CHAR_STATES) );
-    //resultSort = await Fecht.updateOne({_id:f._id}, {initArray:characterStates}).catch(errHandler);
-   
+  
     if (!charState) {
-      pingBackMsg(message, mention+", we could not find you belonging to this fecht!\nPlease use `!join` to join a side.", true);
+      pingBackMsg(message, mention+", we could not find you belonging to this fecht!\nPlease use `!join` to join a side.", true);    
       return;
     } else {
-      charState.initVal = (!useSuccesses ? rollResult.total : rollResult.successes);
+      let polarityValue;
+
+      if (!usingTempInit) {
+        if (polarityChange) {
+          if (rollResult.renderedExpression === "~" && charState.initVal === 0) {
+            pingBackMsg(message, "Current initiative is `0` and cannot be flipped. Use `+` or `-` to explicitly set positive/negative default initiative.");
+            return;
+          }
+          charState.initNegative = rollResult.renderedExpression === "-" || (rollResult.renderedExpression === "~" && !charState.initNegative );
+          polarityValue = charState.initNegative ? "Negative" : "Positive";
+        } else {
+          charState.initExpr = remainingContents.split("\\")[0] + flagTrace;
+        }
+      } else {
+        let lastInitVal = charState.initVal;
+        charState.initVal = polarityChange ? getFlippedInitVal(charState.initVal, rollResult.renderedExpression) :
+            (!useSuccesses ? rollResult.total : rollResult.successes);
+        if (polarityChange) {
+          if (charState.initVal === 0) {
+            pingBackMsg(message, "Current initiative is `0` and can never change with positive/negative adjustments");
+            return;
+          }
+          polarityValue = charState.initVal < 0 ? "Negative" : "Positive";
+        }
+        
+        if (lastInitVal !== charState.initVal && (charState.initVal !== 0 || phase.initIncludeZero) ) {
+          charState.initFloat = Math.random();
+        } else {   
+          if (isDM) {
+            pubChannel.send(prefixer + mention + " *privately change own "+descInit+".*");
+          }
+          else {
+            let resultSuffix = "";
+
+
+           if (!hideResults) resultSuffix = " : ~~`"+getRollResultsLine(rollResult)+"` " + (!useSuccesses ? rollResult.total : rollResult.successes) +"~~"; 
+            pubChannel.send(prefixer + mention + " "+descInit+" change attempt fails with "+remainingContents+flagTrace+resultSuffix);
+          }
+          message.delete();
+          return;
+        }
+      }
+
+      
+
+
       await charState.save();
+
+      if (usingTempInit) {
+        await shuffleInitiatives(f, false, charState._id);
+      }
+      
+
       if (isDM) {
-        pubChannel.send(mention + " *privately sets own initiative.*");
+        if (!polarityChange) pubChannel.send(prefixer + mention + " *privately "+descAction+" own "+descInit+".*");
+        else pubChannel.send(prefixer + mention + " *privately "+descAction+" own "+descInit+" to:* "+polarityValue );
       } else {
         let resultSuffix = "";
-        if (!hideResults) resultSuffix = " : `"+getRollResultsLine(rollResult)+"` => **" + (!useSuccesses ? rollResult.total : rollResult.successes) +"**";
-        pubChannel.send(mention + " *sets own initiative to* "+remainingContents+flagTrace+resultSuffix);
+         if (!hideResults && usingTempInit) resultSuffix = " : `"+getRollResultsLine(rollResult)+"` => **" + (!useSuccesses ? rollResult.total : rollResult.successes) +"**";
+         if (!polarityChange) pubChannel.send(prefixer + mention + " *"+descAction+" own "+descInit+" to* "+remainingContents+flagTrace+resultSuffix);
+         else pubChannel.send(prefixer + mention + " *"+descAction+" own "+descInit+" to:* "+polarityValue);
       }
       message.delete();
       return;
@@ -793,7 +991,7 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
       let man = await getManueverObj(rem, true, channel, mention, null);
       mentionHashArr[mention].push(man);
     }, true, (m)=> {
-      return m.author.id !== client.user.id || !(m.content.startsWith("|<@") || (m.author.id === client.user.id && m.embeds && m.embeds[0] && m.embeds[0].author && !m.embeds[0].author.name.startsWith(OUTGAME_PREFIX) ));
+      return m.author.id !== client.user.id || !(m.content.startsWith("|") || (m.author.id === client.user.id && m.embeds && m.embeds[0] && m.embeds[0].author && !m.embeds[0].author.name.startsWith(OUTGAME_PREFIX) ));
     });
 
     
@@ -1539,7 +1737,7 @@ client.on("message", async (message) => {
       return;
     }
 
-    if (command === "init" || command === "init-p" || command === "init-e") {
+    if (command === "init" || command === "init-t") {
       setupInitiative(channel, message, remainingContents, command);
       return;
     }
@@ -1571,10 +1769,6 @@ client.on("message", async (message) => {
 
     // Fecht only commands
     switch(command) {
-      case 'blahblah_init': 
-
-
-      return;
       case 'phases':
       case 'phase': // test single phase setting
         if (!remainingContents) {
@@ -1892,7 +2086,7 @@ client.on("message", async (message) => {
       break;
       case 'p':
         message.delete();
-         f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
+         f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI");
          if (!remainingContents) {
           if (f.phases && f.phases.length ) sendTempMessage("List of phases:\n" + f.phases.map((p,i)=>"*"+(i+1)+"*. "+p.name).join("\n"), channel);
           return;
@@ -1915,7 +2109,7 @@ client.on("message", async (message) => {
             return;
           }
 
-        let phaseSelectionMode = lastFooterTitle === TITLES.enteringPhase || !lastFooterTitle;
+        let phaseSelectionMode = lastFooterTitle === TITLES.enteringPhase || TITLES.enteringPhaseInitRevealed || !lastFooterTitle;
         let phasesArray = f.phases && f.phases.length ? f.phases : [];
         let backtrackCount = 0;
         let newPhaseCount = f.phaseCount;
@@ -1964,6 +2158,7 @@ client.on("message", async (message) => {
         f.roundCount = roundCount;
         f.miscTurnCount = miscTurnCount;
         f.initStep = 0;
+        f.initI = 0;
         
         let newPhaseObj = getCurrentPhase(f);
         if (newPhaseCount === f.phaseCount) {
@@ -2045,6 +2240,8 @@ client.on("message", async (message) => {
           return;
         }
 
+        let prePhase = isOutsidePhase(m);
+
         if (!canAdvanceForward(f)) {
           sendTempMessage("No more turns found in current initiative track!", channel);
           return;
@@ -2080,10 +2277,11 @@ client.on("message", async (message) => {
           }
 
          
-          f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
+          f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initArray initI");
 
           m = await channel.fetchMessage(f.latest_footer_id);
-
+         
+          
           let lastFooterTitle = m.embeds[0].title;
           if (lastFooterTitle === TITLES.turnFor) {
             //await endTurn(channel, getCurrentPhase(f), m);
@@ -2099,9 +2297,14 @@ client.on("message", async (message) => {
           }
           */
 
+         let prePhase = isOutsidePhase(m);
+         if (prePhase) {
+           await shuffleInitiatives(f, true)
+         }
+
           // DUplication begins here
           let wasResolution = lastFooterTitle === TITLES.resolution;
-
+          
           if (wasResolution) {
             let allMs = await Manuever.find({channel_id:channel.id}, "message_id");
             let i = allMs.length;
