@@ -78,8 +78,8 @@ const DESCS = {
 };
 
 function getTurnOptions(f) {
-  //`!turn >`/
-  return "`!turn @[mentions]`";
+  //`!t` /
+  return (canAdvanceForward(f) ? "`!t` /" : "")+"`!turn @[mentions]`";
 }
 
 function isOutsidePhase(footerMessage) {
@@ -171,7 +171,7 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId) {
           c.initVal = phase.initVal; 
         } 
         if (phase.initReact) {
-          c.initVal = c.initReact || phase.initVal;
+          c.initVal = c.initReact;
         }
         c.initFloat += floatUseCharInitInt ? parseInt(cInitExprVal) : 0;
       }
@@ -188,7 +188,7 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId) {
   let payload = {initArray:charStates};
   if (checkCharStateShiftId) {
     // backtrack initiative counter if position in array has shifted
-    if (charStates.findIndex((c)=>c._id===checkCharStateShiftId) !== lastPosition) {
+    if (charStates.findIndex((c)=>c._id===checkCharStateShiftId) >= lastPosition) {
       f.initI--;
       if (f.initI < 0) f.initI = 0;
       payload.initI = f.initI = f.initI;
@@ -228,16 +228,12 @@ async function setupInitiative(channel, message, remainingContents, command) {
 
   let usingTempInit = command === "init-t";
   let isDM = channel.type === "dm";
-       
-  if (!remainingContents) {
-    if (!isDM) message.delete();
-    return;
-  }
 
   let f;
-  let settingOthersInitiative = false;
+  
   let scope = "latest_footer_id phases phaseCount gamemaster_id initI initArray";
   let pubChannel;
+
   if (isDM) { // DM channel checks
     let user = User.findOne({user_id:user_id}).catch(errHandler);
 
@@ -256,9 +252,7 @@ async function setupInitiative(channel, message, remainingContents, command) {
       message.reply("There seems to be no more fecht in progress at the moment at the channel were last registered in.");
       return;
     }
-    if (message.mentions.users.size && f.gamemaster_id !== message.author.id) {
-      message.reply("You need to be a GM of a fecht to control other people's initiatives");
-    }
+ 
   } else {
     f = await Fecht.findOne({channel_id:channel.id}, scope).catch(errHandler);
     if (!f) { // Pub Channel checks
@@ -266,13 +260,17 @@ async function setupInitiative(channel, message, remainingContents, command) {
       return;
     }
     pubChannel = channel;
+  }
 
-    if ( (message.mentions.users.size && (settingOthersInitiative=(message.mentions.everyone || message.mentions.users.size >=2 || message.mentions.users.first().id !== message.author.id)) ) 
-      && f.gamemaster_id !== message.author.id
-    )  {  
-      pingBackMsg(message, "You need to be a fecht GM to control other users's initiatives");
-      return;
-    }
+  if (!remainingContents) {
+    if (!isDM) message.delete();
+    return;
+  }
+
+   let settingOthersInitiative = message.mentions.everyone || message.mentions.users.size >=2 || (!!message.mentions.users.size && message.mentions.users.first().id !== message.author.id);
+  if (settingOthersInitiative && f.gamemaster_id !== message.author.id) {
+    pingBackMsg(message, "You need to be a GM of a fecht to control other people's initiatives");
+    return;
   }
 
   let footerMessage = await pubChannel.fetchMessage(f.latest_footer_id);
@@ -287,7 +285,8 @@ async function setupInitiative(channel, message, remainingContents, command) {
   let charMatches;
   let characterStates;
 
-  if (message.mentions.users.size || message.mentions.everyone) {
+  let bulkSetOthersInitiative = settingOthersInitiative;
+  if (settingOthersInitiative) {
     if (message.mentions.everyone) {
       characterStates = await CharacterState.find({fecht:f._id}).catch(errHandler);
       if (!characterStates || !characterStates.length) {
@@ -296,10 +295,27 @@ async function setupInitiative(channel, message, remainingContents, command) {
       }
       charMatches = characterStates.map((c=>c.mention));
       remainingContents = remainingContents.replace(/@everyone/g, "");
-    } else charMatches =  getCharNameRegMatches(remainingContents);
+      remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
+      remainingContents.trim();
+    } else {
+      charMatches =  getCharNameRegMatches(remainingContents);
+      if (message.mentions.users.size === 1) {
+        mention = charMatches[0];
+        bulkSetOthersInitiative = false;  // flag off treat as if setting "own" initiative with different mention
+      }
+    }
     remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
     remainingContents = remainingContents.trim();
   } else {
+
+    if (message.mentions.users.size) {  // emulate single handle entry self
+      let loneMatch = remainingContents.match(new RegExp(CHAR_NAME_REGSTR));
+      let loneHandle = decomposeMention(loneMatch[0]);
+      loneHandle = loneHandle.handle;
+      remainingContents = remainingContents.replace(loneMatch[0], "");
+      remainingContents = remainingContents.trim();
+      if (loneHandle) remainingContents = ":"+loneHandle + " " + remainingContents;
+    }
     // duplicate
     if (remainingContents.startsWith(":") && remainingContents.charAt(1)!=":") {
       let li = remainingContents.indexOf(" ");
@@ -314,6 +330,9 @@ async function setupInitiative(channel, message, remainingContents, command) {
         mention = getMentionChar(message.author.id, handle);
     }
   }
+
+  
+
   
   let rSplit = remainingContents.split("\\");
   let rollFlags = rSplit.length >= 2 ? rSplit[rSplit.length - 1].trim() : "";
@@ -365,11 +384,11 @@ async function setupInitiative(channel, message, remainingContents, command) {
 
   let prefixer = !usingTempInit ? "|" : "|only for this phase: ";
   let descAction = !usingTempInit ? "sets" : "shifts";
-  let descInit = !usingTempInit ? "default initiative" : "initiative";
-  if (message.mentions.users.size || message.mentions.everyone) {
+  descAction += settingOthersInitiative ? "" : " own";
+  let descInit = settingOthersInitiative ? "(by GM) " : "";
+  descInit += !usingTempInit ? "default initiative" : "initiative";
+  if (bulkSetOthersInitiative) {
     let userCharHash = getUserCharHash(charMatches);
-
-
     let charAvailMentionMap = new Set(characterStates.map(c=>c.mention));
     let missingArr = charMatches.filter(m=>!charAvailMentionMap.has(m));
 
@@ -384,8 +403,8 @@ async function setupInitiative(channel, message, remainingContents, command) {
           characterStates[i].initExpr = remainingContents.split("\\")[0] + flagTrace;
           await characterStates[i].save();
         }
-      } else {
-        pingBackMsg(message, "Sorry we don't support bulk setting/shuffling of initiatives while a phase is in progress!");
+      } else {  
+        pingBackMsg(message, "Sorry I don't support bulk setting/shuffling of initiatives while a phase is in progress!");
         return;
       }
    
@@ -403,7 +422,7 @@ async function setupInitiative(channel, message, remainingContents, command) {
     charState = characterStates.find(c=>mention===c.mention); // await CharacterState.findOne({fecht:f._id, mention:mention}).catch(errHandler);
   
     if (!charState) {
-      pingBackMsg(message, mention+", we could not find you belonging to this fecht!\nPlease use `!join` to join a side.", true);    
+      pingBackMsg(message, mention+", I could not find you belonging to this fecht!\nPlease use `!join` to join a side.", true);    
       return;
     } else {
       let polarityValue;
@@ -435,22 +454,19 @@ async function setupInitiative(channel, message, remainingContents, command) {
           charState.initFloat = Math.random();
         } else {   
           if (isDM) {
-            pubChannel.send(prefixer + mention + " *privately change own "+descInit+".*");
+            pubChannel.send(prefixer + mention + " *privately shifted own "+descInit+".*");
           }
           else {
             let resultSuffix = "";
 
 
            if (!hideResults) resultSuffix = " : ~~`"+getRollResultsLine(rollResult)+"` " + (!useSuccesses ? rollResult.total : rollResult.successes) +"~~"; 
-            pubChannel.send(prefixer + mention + " "+descInit+" change attempt fails with "+remainingContents+flagTrace+resultSuffix);
+            pubChannel.send(prefixer + mention + " "+descInit+" shift attempt fails with "+remainingContents+flagTrace+resultSuffix);
           }
           message.delete();
           return;
         }
       }
-
-      
-
 
       await charState.save();
 
@@ -460,13 +476,13 @@ async function setupInitiative(channel, message, remainingContents, command) {
       
 
       if (isDM) {
-        if (!polarityChange) pubChannel.send(prefixer + mention + " *privately "+descAction+" own "+descInit+".*");
-        else pubChannel.send(prefixer + mention + " *privately "+descAction+" own "+descInit+" to:* "+polarityValue );
+        if (!polarityChange) pubChannel.send(prefixer + mention + " *privately "+descAction+" "+descInit+".*");
+        else pubChannel.send(prefixer + mention + " *privately "+descAction+" "+descInit+" to:* "+polarityValue );
       } else {
         let resultSuffix = "";
          if (!hideResults && usingTempInit) resultSuffix = " : `"+getRollResultsLine(rollResult)+"` => **" + (!useSuccesses ? rollResult.total : rollResult.successes) +"**";
-         if (!polarityChange) pubChannel.send(prefixer + mention + " *"+descAction+" own "+descInit+" to* "+remainingContents+flagTrace+resultSuffix);
-         else pubChannel.send(prefixer + mention + " *"+descAction+" own "+descInit+" to:* "+polarityValue);
+         if (!polarityChange) pubChannel.send(prefixer + mention + " *"+descAction+" "+descInit+" to* "+remainingContents+flagTrace+resultSuffix);
+         else pubChannel.send(prefixer + mention + " *"+descAction+" "+descInit+" to:* "+polarityValue);
       }
       message.delete();
       return;
@@ -522,7 +538,7 @@ function getRoster(roster) {
 }
 
 function canAdvanceForward(fecht) {
-  return fecht.initArray && fecht.initI < fecht.initArray.length - 1;
+  return fecht.initArray && fecht.initI <= fecht.initArray.length - 1;
 }
 
 async function updateNewBodyFooter(f, channel, miscTurnCount) {
@@ -1797,7 +1813,7 @@ client.on("message", async (message) => {
           } else {
             console.log("Failed to update phases for fecht");
           } 
-        });
+        }).catch(emptyHandler);
       break;
       case 'skipturnall':
       case 'endturnall':
@@ -2229,7 +2245,8 @@ client.on("message", async (message) => {
       return;
       case 't':
        
-        f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI initArray");
+        f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI initArray").populate("initArray")
+        ;
         m = await channel.fetchMessage(f.latest_footer_id);
 
         let footerTitle = m.embeds[0].title;
@@ -2252,36 +2269,54 @@ client.on("message", async (message) => {
           return;
         }
 
-        if (!prePhase) {
-          // todo: advance turn forward
-          
-          // depending on how many in turns gathered,
-          // alter remainingContents so that it can carry over turn case instead of return
-          //f.initI++;
+        phase = getCurrentPhase(f);
 
-          
-          //Fecht.updateOne({_id:f._id}, {initI:f.initI});
+        f.initStep++;
+
+       
+        let mentionsSentence = f.initArray[f.initI].mention;
+        let initVal = f.initArray[f.initI].initVal;
+        if (!phase.initSingle) {
+          let ms;
+          while(ms=f.initArray[++f.initI]) {
+            if (ms.initVal === initVal)
+              mentionsSentence += " " +ms.mention;
+            else break;
+          }
         }
- 
-      return;
+      
+        await Fecht.updateOne({_id:f._id}, {initI:f.initI, initStep:f.initStep});
+
+        remainingContents = mentionsSentence;
+      //  console.log("Triggering:"+f.initI + "/ "+f.initArray.length + "::"+f.initStep);
+       // console.log(mentionsSentence);
+
+        // carry over to case turn
       case 'turn': // test single turn for phase atm
          message.delete(); 
-        if (message.mentions.users.size) {
-          let arr = message.mentions.users.array();
-          let i;
-          let len = arr.length;
-          for (i=0; i<len; i++) {
-            if (arr[i].bot) {
-             
-              sendTempMessage("Currently, bots can't take part in a turn!", channel);
-              return;
-            }
-          }
-          remainingContents = remainingContents.replace("\t", " ");
+        
+    
+        if (message.mentions.users.size || command === "t") {
+
           
+          if (command !== "t") {
+              let i;
+               let len;
+            let arr = message.mentions.users.array();
+            len = arr.length;
+            for (i=0; i<len; i++) {
+              if (arr[i].bot) {
+                sendTempMessage("Currently, bots can't take part in a turn!", channel);
+                return;
+              }
+            }
+            remainingContents = remainingContents.replace("\t", " ");
+          }
+
           let abc = getCharNameRegMatches(remainingContents);
           
-          len = abc.length; // TODO: check valid characters
+          let i;
+          let len = abc.length; // TODO: check valid characters
           for (i=0; i< len; i++) {
             let spl = abc[i].split(":", 2);
             spl[0] = spl[0].trim();

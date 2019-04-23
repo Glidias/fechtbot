@@ -66,7 +66,6 @@ const FechtSchema = new Schema(
             _id: false,
             name: {
                 type: String,
-                required: true,
                 trim: true,
                 default: ""
             },
@@ -75,8 +74,8 @@ const FechtSchema = new Schema(
             },
             reacts: [{
                 type: String,
-                required: true,
-                trim: true
+                trim: true,
+                default: ""
             }],
             initVal: {
                 type: Number,
@@ -88,8 +87,8 @@ const FechtSchema = new Schema(
             },
             dmReacts: [{
                 type: String,
-                required: true,
-                trim: true
+                trim: true,
+                default: ""
             }],
             reactsM: [{
                 type: String,
