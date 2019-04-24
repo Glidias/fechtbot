@@ -592,6 +592,10 @@ async function deleteDataFromChannel(channel) {
 }
 
 function getBullet(c,f) {
+
+  if (c.dead) {
+    return "×";
+  }
   if (f.initStep === 0 && f.miscTurnCount === 0) {
     return c.initExpr === "0" ? "○ " : c.initNegative ? "• " : "◘ ";
   }
