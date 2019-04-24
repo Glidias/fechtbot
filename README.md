@@ -1,6 +1,9 @@
 # fechtbot
 FechtBot: A Discord Bot to manage turn/phase-based tabletop RPG combat online players
 
+View wiki link for bot invite link and other related links:
+
+https://github.com/Glidias/fechtbot/wiki
 
 ### Deploying to Heroku
 
