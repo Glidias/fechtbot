@@ -136,11 +136,11 @@ function getValidRollOrNull(roll) {
   return result && !result.errors.length ? result : null;
 }
 
-async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId) {
-  let charStates = await CharacterState.find({fecht:f._id});
+async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId, charStates) {
+  if (!charStates) charStates = await CharacterState.find({fecht:f._id});
   let phase = getCurrentPhase(f);
 
-
+  
   let lastPosition = -1;
   if (checkCharStateShiftId) {
     lastPosition = f.initArray.findIndex((c)=>c._id === checkCharStateShiftId);
@@ -166,13 +166,23 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId) {
       c.initFloat = Math.random();
       c.initVal = cInitExprVal;
 
-      if (phase.initReact || phase.initVal) {
+      if (phase.initReact || phase.initVal || phase.initTeam) {
         if (phase.initVal) {
           c.initVal = phase.initVal; 
         } 
-        if (phase.initReact) {
-          c.initVal = c.initReact;
+        
+        if (phase.initTeam) {
+          let teamIndex =  f.sides.indexOf(c.side);
+          if (teamIndex >= 0) c.initVal = teamIndex + 1;
+          else if (phase.initTeam !== 2) {
+            c.initVal = 0;
+          }
         }
+
+        if (phase.initReact) {
+          if (!!c.initReact || phase.initReact !== 2) c.initVal = c.initReact;
+        }
+
         c.initFloat += floatUseCharInitInt ? parseInt(cInitExprVal) : 0;
       }
 
@@ -185,23 +195,22 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId) {
   }
 
   charStates.sort( getSortingFunctionOf(phase.initSort, SORT_CHAR_STATES) );
-  let payload = {initArray:charStates};
+
   if (checkCharStateShiftId) {
     // backtrack initiative counter if position in array has shifted
-    if (charStates.findIndex((c)=>c._id===checkCharStateShiftId) >= lastPosition) {
-      f.initI--;
-      if (f.initI < 0) f.initI = 0;
-      payload.initI = f.initI = f.initI;
+    var newIndex = charStates.findIndex((c)=>c._id===checkCharStateShiftId);
+    
+    if (newIndex < f.initI) {
+      return false;
     }
+    
   }
 
-  // initI
 
-
+  let payload = {initArray:charStates};
   let resultSort = await Fecht.updateOne({_id:f._id}, payload).catch(errHandler);
   f.initArray = payload.initArray;
-  //console.log("init table:");
-  //console.log(payload.initArray.map((c,i)=>{return {index:i, m: c.mention, val:c.initVal, f: (""+c.initFloat).slice(0,7), c:payload.initI===i} } ));
+ 
     
   return payload;
 }
@@ -231,7 +240,7 @@ async function setupInitiative(channel, message, remainingContents, command) {
 
   let f;
   
-  let scope = "latest_footer_id phases phaseCount gamemaster_id initI initArray";
+  let scope = "latest_footer_id phases phaseCount sides gamemaster_id initI initArray";
   let pubChannel;
 
   if (isDM) { // DM channel checks
@@ -363,7 +372,6 @@ async function setupInitiative(channel, message, remainingContents, command) {
   if (flagTrace) flagTrace = "\\"+flagTrace;
  
   if (!rollResult) {
-   
 
     if (remainingContents === "+" || remainingContents === "-" || remainingContents === "~") {
       rollResult = { renderedExpression: remainingContents, total:0, successes:0, failures:0 };
@@ -450,7 +458,8 @@ async function setupInitiative(channel, message, remainingContents, command) {
           polarityValue = charState.initVal < 0 ? "Negative" : "Positive";
         }
         
-        if (lastInitVal !== charState.initVal && (charState.initVal !== 0 || phase.initIncludeZero) ) {
+        //lastInitVal !== charState.initVal &&
+        if ((charState.initVal !== 0 || phase.initIncludeZero) ) {
           charState.initFloat = Math.random();
         } else {   
           if (isDM) {
@@ -468,11 +477,21 @@ async function setupInitiative(channel, message, remainingContents, command) {
         }
       }
 
-      await charState.save();
+     
 
+      let success = true;
       if (usingTempInit) {
-        await shuffleInitiatives(f, false, charState._id);
+         success = await shuffleInitiatives(f, false, charState._id, characterStates);
       }
+      if (!success) {
+        let resultSuffix = "";
+        if (!hideResults) resultSuffix = " : ~~`"+getRollResultsLine(rollResult)+"` " + (!useSuccesses ? rollResult.total : rollResult.successes) +"~~"; 
+        pubChannel.send(mention + " "+descInit+" *shift attempt failed to move up the phase, rolling*: "+remainingContents+flagTrace+resultSuffix);
+        message.delete();
+        return;
+      }
+
+      await charState.save();
       
 
       if (isDM) {
@@ -641,7 +660,8 @@ async function rollResolvableMsg(message) {
   //splits2[1] = " *"+splits2[1]+"* ";
   splits2.shift();
   let slot = parseFloat(splits2[0]);
-  await Manuever.deleteOne({channel_id:message.channel.id, slot:slot});
+ 
+ 
 
   splits2.shift();
   let str =  splits2.join(" ");
@@ -650,7 +670,28 @@ async function rollResolvableMsg(message) {
   let rem = isValidManeverExpr(str);
   
   rem.handle = dec.handle;
-  return await rollMessageFinal(message, rem, dec.id, slot);
+  let resultRoll = await rollMessageFinal(message, rem, dec.id, slot);
+
+  let manuever = Manuever.findOne({channel_id:message.channel.id, slot:slot});
+  // await Manuever.deleteOne({channel_id:message.channel.id, slot:slot});
+  if (resultRoll && manuever.react && manuever.characterState) {
+    await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverResultValue(manuever, rollResult)}).catch(errHandler);
+  }
+  if (manuever) {
+    await Manuever.deleteOne({_id:manuever._id});
+  }
+  return resultRoll;
+}
+
+function getManueverResultValue(manuever, result) {
+  if (!manuever.comment) return result.total;
+  let spl = manuever.comment.split("\\");
+  if (spl.length >= 2) spl = spl.pop();
+  else return result.total;
+  if (spl.findIndex("s")>=0) {
+    return result.successes;
+  }
+  return result.total;
 }
 
 async function rollMessage(message, userCharHash) {
@@ -678,11 +719,14 @@ async function rollMessageFinal(message, rem, userid, slot) {
   if (rem.comments) {
     msg += " *# "+rem.comments.trim()+"*"
   }
+  let results = null;
   if (rem.roll) {
-    let results = DICE.roll(rem.roll);  
+    results = DICE.roll(rem.roll);  
     msg += "\n"+stripSpaces(results.renderedExpression) + SYMBOLS.dice + " " +(results.successes >= 1 ? "**"+results.successes+"**" : results.successes)+"("+results.failures+")" + " = "+results.total;
   }
   await message.channel.send("|"+msg);
+
+  return results;
 }
 
 async function rollManuever(manuever, channel) {
@@ -694,80 +738,23 @@ async function rollManuever(manuever, channel) {
   if (manuever.comment) {
     msg += " *# "+manuever.comment+"*";
   }
+  let results = null;
   if (manuever.roll) {
-    let results = DICE.roll(manuever.roll);  
+    results = DICE.roll(manuever.roll);  
     msg += "\n"+stripSpaces(results.renderedExpression) + SYMBOLS.dice +" " + (results.successes >= 1 ? "**"+results.successes+"**" : results.successes)+"("+results.failures+")" + " = "+results.total;
   }
+
+  if (results && manuever.react && manuever.characterState) {
+    await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverResultValue(manuever, results)}).catch(errHandler);
+  }
+  if (manuever) {
+    await Manuever.deleteOne({_id:manuever._id});
+  }
+
   await channel.send("|"+msg);
+  return results;
 }
 
-
-async function rollManuever2(manuever, channel) {
-  let dec = decomposeMention(manuever.mention);
-  let member = channel.members.get(dec.id)
-  let user =  member.user;  // how to
-  if (!member) return await rollManuever(manuever, channel);
-
-  var msg = "";
-
-  msg += " **"+manuever.label+"**";
-  if (manuever.roll) {
-    msg += " `"+manuever.roll+"`";
-  }
-  if (manuever.comment) {
-    msg += " *# "+manuever.comment+"*"
-  }
-  if (manuever.roll) {
-    let results = DICE.roll(manuever.roll);  
-    msg += "\n"+results.renderedExpression + SYMBOLS.dice + " ("+(results.successes >= 1 ? "**"+results.successes+"**" : results.successes)+"/"+results.failures+")" + " = "+results.total;
-  }
-
-
-   await channel.send(new Discord.RichEmbed({
-    "description": msg, 
-    "author": {
-      "name": member.displayName+(dec.handle ? ":"+dec.handle : ""), // + (remainingContents.length > 1 ? remainingContents[0] : ""),
-      "icon_url": user.displayAvatarURL
-    }
-  }));
-}
-
-
-async function rollMessage2(message, userCharHash) {
-  let member = message.channel.members.get(message.author.id);
-  let user = message.author;
-  if (!member) return await rollMessage(message);
-
-  let rem = await isValidManueverMsg(message.content, message.channel);
-  if (!rem.handle && userCharHash) {
-    if (userCharHash.defaulting["<@"+message.author.id+">"] != null) {
-      rem.handle = userCharHash.defaulting["<@"+message.author.id+">"];
-    }
-  }
-
-  var msg = "";
-
-  msg += " **"+rem.str.trim()+"**";
-  if (rem.roll) {
-    msg += " `"+rem.roll.trim()+"`";
-  }
-  if (rem.comments) {
-    msg += " *# "+rem.comments.trim()+"*"
-  }
-  if (rem.roll) {
-    let results = DICE.roll(rem.roll);  
-    msg += "\n"+results.renderedExpression + SYMBOLS.dice + " ("+(results.successes >= 1 ? "**"+results.successes+"**" : results.successes)+"/"+results.failures+")" + " = "+results.total;
-  }
-  
-  await message.channel.send(new Discord.RichEmbed({
-    "description": msg, //remainingContents[remainingContents.length-1]
-    "author": {
-      "name": member.displayName+(rem.handle ? ":"+rem.handle.trim() : ""), // + (remainingContents.length > 1 ? remainingContents[0] : ""),
-      "icon_url": user.displayAvatarURL
-    }
-  }));
- 
-}
 
 client.on("ready", () => {
   console.log("FechtBot Online!");
@@ -957,13 +944,26 @@ function getUserCharHash(matches) {
   return {hash, defaulting};
 }
 
+function getCharStateMentionHash(characterStates) {
+  var hash = {};
+  var i = characterStates.length;
+  
+  while(--i > -1) {
+    hash[characterStates[i].mention] = characterStates[i];
+  }
+  return hash;
+}
+
 async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
 
   footerMessage.clearReactions();
   let matches = getCharFooterMatches(footerMessage);
   let userCharHash = getUserCharHash(matches);
   await footerMessage.edit(new Discord.RichEmbed({title:TITLES.turnEnded, description: DESCS.pleaseWait,  color:COLOR_BOT}));
-  
+
+  let characterStates = await CharacterState.find({fecht:fecht._id});
+  let charStatesHash = getCharStateMentionHash(characterStates);
+
   let allReacts = await DMReact.find({channel_id:channel.id}).catch(errHandler);
   let i;
   let spl;
@@ -974,11 +974,14 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
   let mention;
   let mentionHashArr = {};
 
+
+
   for (i=0; i< len; i++) {
     a = allReacts[i];
     if (!a.result) continue;
     if ((rem = await isValidManueverMsg(a.result, channel)))  { // && !rem.error
       mention = getMentionChar(a.user_id, a.handle);
+      rem.charState = charStatesHash[mention];
       if (!mentionHashArr[mention]) mentionHashArr[mention] = [];
       man = await getManueverObj(rem, true, channel, mention, null);
       mentionHashArr[mention].push(man);
@@ -1005,7 +1008,9 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
       }
     
       if (!mentionHashArr[mention]) mentionHashArr[mention] = [];
+      rem.charState = charStatesHash[mention];
       let man = await getManueverObj(rem, true, channel, mention, null);
+
       mentionHashArr[mention].push(man);
     }, true, (m)=> {
       return m.author.id !== client.user.id || !(m.content.startsWith("|") || (m.author.id === client.user.id && m.embeds && m.embeds[0] && m.embeds[0].author && !m.embeds[0].author.name.startsWith(OUTGAME_PREFIX) ));
@@ -1056,7 +1061,7 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
 
   let bd = await channel.fetchMessage(fecht.latest_body_id).catch(errHandler);
   if (bd) {
-    let bdm = await getBodyRenderOfFecht(fecht, channel);
+    let bdm = await getBodyRenderOfFecht(fecht, channel, false, false, characterStates);
     bd.edit(bdm);
   }
 
@@ -1128,7 +1133,7 @@ function getHeaderRenderOfFecht(f) {
 
 // currently limited to 25 fields.
 
-async function getBodyRenderOfFecht(f, channel, alwaysShowSides, purgeInvalidCharStates) { 
+async function getBodyRenderOfFecht(f, channel, alwaysShowSides, purgeInvalidCharStates, characterStates) { 
  var embed = new Discord.RichEmbed();
  var i;
  var len;
@@ -1148,7 +1153,7 @@ var fieldCount = 0;
 
 
 var hashTeams = {};
-var characterStates = await CharacterState.find({fecht:f._id});
+if (!characterStates) characterStates = await CharacterState.find({fecht:f._id});
 
 len = characterStates.length;
 
@@ -1241,6 +1246,23 @@ if (genesis || alwaysShowSides) {
  }
 
  return embed;
+}
+
+async function removeMentionsFromInitLadder(f, matches) {
+  if (!f.initArray || f.initArray.length ===0) return;
+  let newArray = [];
+  let setMatches = new Set(matches);
+  let len = f.initArray.length;
+  for (let i=0;i<len; i++) {
+    let c = f.initArray[i];
+    if (!setMatches.has(c.mention)) {
+      newArray.push(c);
+    }
+  }
+
+  if (newArray.length === f.initArray.length) return;
+  f.initArray = newArray;
+  await Fecht.updateOne({_id:f._id}, {initArray:newArray});
 }
 
 function runOnlyIfGotFecht(channel, user, method, projection) {
@@ -1786,6 +1808,9 @@ client.on("message", async (message) => {
 
     // Fecht only commands
     switch(command) {
+      case 'init-peek':
+      case 'init-show':
+
       case 'phases':
       case 'phase': // test single phase setting
         if (!remainingContents) {
@@ -2102,6 +2127,11 @@ client.on("message", async (message) => {
           await editResolvableMsg(message);
       break;
       case 'p':
+
+        let alwaysEnforceNewRound = remainingContents.startsWith(">>");
+        if (alwaysEnforceNewRound) {
+          remainingContents = remainingContents.slice(1);
+        }
         message.delete();
          f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI");
          if (!remainingContents) {
@@ -2126,17 +2156,23 @@ client.on("message", async (message) => {
             return;
           }
 
-        let phaseSelectionMode = lastFooterTitle === TITLES.enteringPhase || TITLES.enteringPhaseInitRevealed || !lastFooterTitle;
+        let phaseSelectionMode = lastFooterTitle === TITLES.enteringPhase || lastFooterTitle === TITLES.enteringPhaseInitRevealed || !lastFooterTitle;
         let phasesArray = f.phases && f.phases.length ? f.phases : [];
         let backtrackCount = 0;
         let newPhaseCount = f.phaseCount;
         let roundCount = f.roundCount;
         let miscTurnCount = 0;
 
+
         if (remainingContents === ">") {
-          newPhaseCount++;
-          if (newPhaseCount > phasesArray.length) {
-            newPhaseCount = phasesArray.length >= 1 ? 1 : 0;
+          if (!alwaysEnforceNewRound) {
+            newPhaseCount++;
+            if (newPhaseCount > phasesArray.length) {
+              newPhaseCount = phasesArray.length >= 1 ? 1 : 0;
+            }
+          } else {
+            newPhaseCount = 1;
+            if (1 > phasesArray.length) newPhaseCount = 0;
           }
         } else if (remainingContents.startsWith(">") && remainingContents.length >= 2) {
            newPhaseCount = parseInt(remainingContents.slice(1));
@@ -2163,7 +2199,7 @@ client.on("message", async (message) => {
         let newRound = false;
         if (remainingContents.startsWith(">") || newPhaseCount > f.phaseCount) {
           goingForward = true;
-          if (!phaseSelectionMode && remainingContents.startsWith(">") && newPhaseCount <= f.phaseCount) {
+          if (alwaysEnforceNewRound || (!phaseSelectionMode && remainingContents.startsWith(">") && newPhaseCount <= f.phaseCount) ) {
             roundCount++;
             newRound = true;
           }
@@ -2216,7 +2252,7 @@ client.on("message", async (message) => {
             });
           }          
 
-
+    
           await f.save();
 
           if (isDirty) {
@@ -2245,15 +2281,14 @@ client.on("message", async (message) => {
       return;
       case 't':
        
-        f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI initArray").populate("initArray")
-        ;
+        f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI initArray").populate("initArray");
         m = await channel.fetchMessage(f.latest_footer_id);
 
         let footerTitle = m.embeds[0].title;
         if (footerTitle === TITLES.turnFor) {
           //await endTurn(channel, getCurrentPhase(f), m);
           sendTempMessage("Please end turn first. GM can force this with `!endturnall`/`!skipturnall`.", channel);
-          message.delete();
+          message.delete().catch(emptyHandler);
           return;
         }
 
@@ -2265,7 +2300,8 @@ client.on("message", async (message) => {
 
         if (!canAdvanceForward(f)) {
           sendTempMessage("No more turns found in current initiative track!", channel);
-          message.delete();
+           
+          message.delete().catch(emptyHandler);
           return;
         }
 
@@ -2292,10 +2328,12 @@ client.on("message", async (message) => {
        // console.log(mentionsSentence);
 
         // carry over to case turn
+      case 'turn-add':
+      case 'turn-in':
       case 'turn': // test single turn for phase atm
          message.delete(); 
         
-    
+        
         if (message.mentions.users.size || command === "t") {
 
           
@@ -2311,7 +2349,7 @@ client.on("message", async (message) => {
               }
             }
             remainingContents = remainingContents.replace("\t", " ");
-          }
+          } 
 
           let abc = getCharNameRegMatches(remainingContents);
           
@@ -2324,19 +2362,41 @@ client.on("message", async (message) => {
             abc[i] = spl.join(":");
           }
 
-         
-          f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initArray initI");
+          if (!f) {
+            let fder = Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount sides roundCount initStep miscTurnCount backtrackCount initArray initI");
+            if (command ==="turn-in") fder.populate("initArray");
+            f = await fder;
+          }
 
           m = await channel.fetchMessage(f.latest_footer_id);
+
+          phase = getCurrentPhase(f);
+         
+          let gotTurnTick = phase.reactOnly !== 1;
          
           
           let lastFooterTitle = m.embeds[0].title;
           if (lastFooterTitle === TITLES.turnFor) {
-            //await endTurn(channel, getCurrentPhase(f), m);
-            sendTempMessage("Please end turn first. GM can force this with `!endturnall`/`!skipturnall`.", channel);
-            //message.delete();
-            return;
+            if (command !== "turn-add" && command !== "turn-in") {
+              //await endTurn(channel, getCurrentPhase(f), m);
+              sendTempMessage("Please end turn first. GM can force this with `!endturnall`/`!skipturnall`.", channel);
+              //message.delete();
+                return;
+            } else {
+              if (!gotTurnTick) {
+                sendTempMessage("Characters cannot be added last minute to a reaction-only turn!", channel);
+                return;
+              }
+            
+              let newAbc = getCharNameRegMatches(m.embeds[0].description.split("\n")[0] + abc.join(" "));
+              await m.edit(new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.turnFor, description:newAbc.join(", ") + (gotTurnTick ? "\nPlease respond with the reaction icon below to finalise your turn." : "")}));    
+              if (command === "turn-in") {
+                await removeMentionsFromInitLadder(f, abc);
+              }
+              return;
+            }
           }
+        
 
           /*  // This can cause hangups, i'd rather not.. atm
           if (m.embeds[0].description === DESCS.pleaseWait) {
@@ -2388,9 +2448,7 @@ client.on("message", async (message) => {
           }
 
           
-          phase = getCurrentPhase(f);
-         
-          let gotTurnTick = phase.reactOnly !== 1;
+       
           await m.edit(new Discord.RichEmbed({ color:COLOR_BOT, title:TITLES.turnFor, description:abc.join(", ") + (gotTurnTick ? "\nPlease respond with the reaction icon below to finalise your turn." : "")}));
           if (gotTurnTick) {
             m.react(SYMBOLS.turnTick);

@@ -126,6 +126,10 @@ const FechtSchema = new Schema(
                 type: Number,
                 default: 0
             },
+            initTeam: {
+                type: Number,
+                default: 0
+            },
             resolveSort: {
                 type: Number,
                 default: 0
