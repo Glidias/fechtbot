@@ -160,9 +160,7 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId, charS
       splOptions = c.initExpr.split("\\");
       let result = DICE.roll(c.initExpr);
       cInitExprVal = splOptions[1] && splOptions[1].includes("s") ? result.successes : result.total;
-      if (c.initNegative && cInitExprVal > 0) {
-        cInitExprVal = -cInitExprVal;
-      }
+     
       c.initFloat = Math.random();
       c.initVal = cInitExprVal;
 
@@ -184,6 +182,10 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId, charS
         }
       
         c.initFloat += floatUseCharInitInt ? parseInt(Math.abs(cInitExprVal)) : 0;
+      }
+
+      if (c.initNegative && c.initVal > 0) {
+        c.initVal = -c.initVal;
       }
       await c.save();
     }
