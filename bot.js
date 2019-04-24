@@ -245,12 +245,13 @@ async function setupInitiative(channel, message, remainingContents, command) {
   
   let scope = "latest_footer_id phases phaseCount sides gamemaster_id initI initArray";
   let pubChannel;
+  
 
   if (isDM) { // DM channel checks
-    let user = User.findOne({user_id:user_id}).catch(errHandler);
+    let user = await User.findOne({user_id:message.author.id}).catch(errHandler);
 
     if (!user || !user.channel_id) {
-      message.reply("You are not connected to any active fecht channel at the moment via reaction check-in/!gmjoin for DM initiative setup to work");
+      message.reply("You are not connected to any active fecht channel at the moment via reaction check-in or `!dmconnect` for DM initiative setup to work");
       return;
     }
 
@@ -296,17 +297,23 @@ async function setupInitiative(channel, message, remainingContents, command) {
   let mention = getMentionChar(message.author.id, handle);
   let charMatches;
   let characterStates;
+  let gotHere = false;
 
   let bulkSetOthersInitiative = settingOthersInitiative;
   if (settingOthersInitiative) {
     if (message.mentions.everyone) {
+      gotHere = remainingContents.indexOf("@here") >= 0;
       characterStates = await CharacterState.find({fecht:f._id}).catch(errHandler);
+       if (gotHere) {
+        characterStates = characterStates.filter((c)=>f.sides.indexOf(c.side)>=0);
+      }
       if (!characterStates || !characterStates.length) {
-        pingBackMsg(message, "No fechters found at the moment! Please use `!join` to join a side.");
+        pingBackMsg(message, "No fechters found at the moment"+(gotHere ? " at listed sides" : "")+"! Please use `!join` to join a side.");
         return;
       }
+     
       charMatches = characterStates.map((c=>c.mention));
-      remainingContents = remainingContents.replace(/@everyone/g, "");
+      remainingContents = remainingContents.replace(Discord.MessageMentions.EVERYONE_PATTERN, "");
       remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
       remainingContents.trim();
     } else {
@@ -433,9 +440,15 @@ async function setupInitiative(channel, message, remainingContents, command) {
         return;
       }
    
-      if (!polarityChange)
+      if (!polarityChange) {
+        //message.channel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set as:* `"+remainingContents+flagTrace+"`");
         await pubChannel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set as:* `"+remainingContents+flagTrace+"`");
-      else await pubChannel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set to:* "+(rollResult.renderedExpression === "-" ? "`Negative`" : rollResult.renderedExpression === "+" ? "`Positive`" : "`~flip~`"));
+         
+      }
+      else {
+        // message.channel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set to:* "+(rollResult.renderedExpression === "-" ? "`Negative`" : rollResult.renderedExpression === "+" ? "`Positive`" : "`~flip~`"));
+        await pubChannel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set to:* "+(rollResult.renderedExpression === "-" ? "`Negative`" : rollResult.renderedExpression === "+" ? "`Positive`" : "`~flip~`"));
+      }
     }
 
     if (missingArr.length) {
@@ -443,7 +456,7 @@ async function setupInitiative(channel, message, remainingContents, command) {
       return;
     }
 
-    message.delete();
+    if (!isDM) message.delete();
   } else {
     charState = characterStates.find(c=>mention===c.mention); // await CharacterState.findOne({fecht:f._id, mention:mention}).catch(errHandler);
   
@@ -454,6 +467,7 @@ async function setupInitiative(channel, message, remainingContents, command) {
       let polarityValue;
 
       if (!usingTempInit) {
+
         if (polarityChange) {
           if (rollResult.renderedExpression === "~" && charState.initVal === 0) {
             pingBackMsg(message, "Current initiative is `0` and cannot be flipped. Use `+` or `-` to explicitly set positive/negative default initiative.");
@@ -475,22 +489,23 @@ async function setupInitiative(channel, message, remainingContents, command) {
           }
           polarityValue = charState.initVal < 0 ? "Negative" : "Positive";
         }
-        
+       
         //lastInitVal !== charState.initVal &&
         if ((charState.initVal !== 0 || phase.initIncludeZero) ) {
           charState.initFloat = Math.random();
         } else {   
+          let resultSuffix = "";
+           
+           if (!hideResults) resultSuffix = " : ~~`"+getRollResultsLine(rollResult)+"` " + (!useSuccesses ? rollResult.total : rollResult.successes) +"~~"; 
           if (isDM) {
             pubChannel.send(prefixer + mention + " *privately shifted own "+descInit+".*");
+            message.channel.send(prefixer + mention + " "+descInit+" shift attempt fails with "+remainingContents+flagTrace+resultSuffix)
           }
           else {
-            let resultSuffix = "";
-
-
-           if (!hideResults) resultSuffix = " : ~~`"+getRollResultsLine(rollResult)+"` " + (!useSuccesses ? rollResult.total : rollResult.successes) +"~~"; 
             pubChannel.send(prefixer + mention + " "+descInit+" shift attempt fails with "+remainingContents+flagTrace+resultSuffix);
+             message.delete();
           }
-          message.delete();
+         
           return;
         }
       }
@@ -505,23 +520,29 @@ async function setupInitiative(channel, message, remainingContents, command) {
         let resultSuffix = "";
         if (!hideResults) resultSuffix = " : ~~`"+getRollResultsLine(rollResult)+"` " + (!useSuccesses ? rollResult.total : rollResult.successes) +"~~"; 
         pubChannel.send(mention + " "+descInit+" *shift attempt failed to move up the phase, rolling*: "+remainingContents+flagTrace+resultSuffix);
-        message.delete();
+        if (isDM)  message.channel.send(mention + " "+descInit+" *shift attempt failed to move up the phase, rolling*: "+remainingContents+flagTrace+resultSuffix);
+        if (!isDM) message.delete();
         return;
       }
 
       await charState.save();
       
-
+      let resultSuffix = "";
+        if (!hideResults && usingTempInit) resultSuffix = " : `"+getRollResultsLine(rollResult)+"` => **" + (!useSuccesses ? rollResult.total : rollResult.successes) +"**";
       if (isDM) {
         if (!polarityChange) pubChannel.send(prefixer + mention + " *privately "+descAction+" "+descInit+".*");
         else pubChannel.send(prefixer + mention + " *privately "+descAction+" "+descInit+" to:* "+polarityValue );
+
+         if (!polarityChange) message.channel.send(prefixer + mention + " *"+descAction+" "+descInit+" to* "+remainingContents+flagTrace+resultSuffix);
+         else message.channel.send(prefixer + mention + " *"+descAction+" "+descInit+" to:* "+polarityValue);
+
       } else {
-        let resultSuffix = "";
-         if (!hideResults && usingTempInit) resultSuffix = " : `"+getRollResultsLine(rollResult)+"` => **" + (!useSuccesses ? rollResult.total : rollResult.successes) +"**";
+        
          if (!polarityChange) pubChannel.send(prefixer + mention + " *"+descAction+" "+descInit+" to* "+remainingContents+flagTrace+resultSuffix);
          else pubChannel.send(prefixer + mention + " *"+descAction+" "+descInit+" to:* "+polarityValue);
+         message.delete();
       }
-      message.delete();
+     
       return;
     }
   }
@@ -573,6 +594,15 @@ function getBullet(c,f) {
     return c.initExpr === "0" ? "○ " : c.initNegative ? "• " : "◘ ";
   }
   return (c.initVal === 0 ? "○ " : c.initVal < 0 ? "• "  : "◘ ");
+}
+
+async function getEveryoneMentions(f, onlyHere, delimiter) {
+  if (!delimiter) delimiter = " ";
+  let everyCharState = await CharacterState.find({fecht:f._id});
+  if (onlyHere) {
+    everyCharState = everyCharState.filter(c=>f.sides.indexOf(c.side)>=0);
+  }
+  return everyCharState.map(c=>c.mention).join(delimiter);
 }
 
 function getRoster(roster, f) {
@@ -702,7 +732,7 @@ async function rollResolvableMsg(message) {
   let manuever = Manuever.findOne({channel_id:message.channel.id, slot:slot});
   // await Manuever.deleteOne({channel_id:message.channel.id, slot:slot});
   if (resultRoll && manuever.react && manuever.characterState) {
-    await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverResultValue(manuever, rollResult)}).catch(errHandler);
+    await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverReactResultValue(manuever, rollResult)}).catch(errHandler);
   }
   if (manuever) {
     await Manuever.deleteOne({_id:manuever._id});
@@ -710,7 +740,7 @@ async function rollResolvableMsg(message) {
   return resultRoll;
 }
 
-function getManueverResultValue(manuever, result) {
+function getManueverReactResultValue(manuever, result) {
   if (!manuever.comment) return result.total;
   let spl = manuever.comment.split("\\");
   if (spl.length >= 2) spl = spl.pop();
@@ -772,7 +802,7 @@ async function rollManuever(manuever, channel) {
   }
 
   if (results && manuever.react && manuever.characterState) {
-    await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverResultValue(manuever, results)}).catch(errHandler);
+    await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverReactResultValue(manuever, results)}).catch(errHandler);
   }
   if (manuever) {
     await Manuever.deleteOne({_id:manuever._id});
@@ -946,9 +976,10 @@ async function checkAndReactMessage(message, footerTurnMessage) {
 async function getCharStateUserScope(f, message, remainingContents, enableEveryone) {
   let gotEveryone = message.mentions.everyone && enableEveryone;
   let settingOthersInitiative = gotEveryone || message.mentions.users.size >=2 || (!!message.mentions.users.size && message.mentions.users.first().id !== message.author.id);
-
+  let gotHere = false;
   if (!gotEveryone && message.mentions.everyone) {
-    remainingContents = remainingContents.replace(/@everyone/g, "");
+    gotHere = remainingContents.indexOf("@here") >= 0;
+    remainingContents = remainingContents.replace(Discord.MessageMentions.EVERYONE_PATTERN, "");
     remainingContents = remainingContents.trim();
   }
 
@@ -967,8 +998,11 @@ async function getCharStateUserScope(f, message, remainingContents, enableEveryo
         characterStates = [];
       }
       origCharStates = characterStates;
+      if (gotHere) {
+        characterStates = characterStates.filter((c)=>f.sides.indexOf(c.side)>=0);
+      }
       charMatches = characterStates.map((c=>c.mention));
-      remainingContents = remainingContents.replace(/@everyone/g, "");
+      remainingContents = remainingContents.replace(Discord.MessageMentions.EVERYONE_PATTERN, "");
       remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
       remainingContents.trim();
     } else {
@@ -1103,6 +1137,9 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
   for (i=0; i< len; i++) {
     a = allReacts[i];
     if (!a.result) continue;
+    if (!(a.result.startsWith("!r ") && a.result.startsWith("!rp "))) {
+      a.result = "!r "+a.result;
+    }
     if ((rem = await isValidManueverMsg(a.result, channel)))  { // && !rem.error
       mention = getMentionChar(a.user_id, a.handle);
       rem.charState = charStatesHash[mention];
@@ -2269,11 +2306,15 @@ client.on("message", async (message) => {
         }
       }
 
+      sendTempMessage("`"+command+"` executed on: "+remainingContents, channel);
+
       await updateBodyWithFecht(f, channel, false, false, scopeChars.origCharStates );
+      
 
       if (m.embeds[0].title === TITLES.resolution || m.embeds[0].title === TITLES.turnEnded) {
-        m.edit( new Discord.RichEmbed({ color:m.embeds[0].color, title:m.embeds[0].title, description: getCarryOnMsg(f)}) );
+        await m.edit( new Discord.RichEmbed({ color:m.embeds[0].color, title:m.embeds[0].title, description: getCarryOnMsg(f)}) );
       }
+     
 
       return;
       case 'join':
@@ -2493,6 +2534,17 @@ client.on("message", async (message) => {
 
       
       return;
+      case 'dmconnect':
+        message.delete();
+      
+        await User.updateOne({user_id:message.author.id}, {
+        channel_id: channel.id,
+        user_id: message.author.id
+      }, {upsert: true, setDefaultsOnInsert: true});
+
+        await message.author.send("You are now connected to the fecht channel: <#"+ channel.id + "> on DM.");
+
+      return;
       case 't':
        
         f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initI initArray").populate("initArray");
@@ -2546,9 +2598,24 @@ client.on("message", async (message) => {
       case 'turn-in':
       case 'turn': // test single turn for phase atm
          message.delete(); 
+          let everyoneTurns = null;
+         if (message.mentions.everyone) {
+           
+          if (!f) {  // duplicate
+            let fder = Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount sides roundCount initStep miscTurnCount backtrackCount initArray initI");
+            if (command ==="turn-in") fder.populate("initArray");
+            f = await fder;
+          }
+            everyoneTurns = (await getEveryoneMentions(f, remainingContents.indexOf("@here") >=0));
+           if (everyoneTurns) {
+            remainingContents += " " + everyoneTurns;
+            remainingContents.replace(Discord.MessageMentions.EVERYONE_PATTERN, "");
+            remainingContents = remainingContents.trim();
+           }
+         }
         
         
-        if (message.mentions.users.size || command === "t") {
+        if (everyoneTurns || message.mentions.users.size || command === "t") {
 
           
           if (command !== "t") {
@@ -2576,7 +2643,7 @@ client.on("message", async (message) => {
             abc[i] = spl.join(":");
           }
 
-          if (!f) {
+          if (!f) { // duplicate
             let fder = Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount sides roundCount initStep miscTurnCount backtrackCount initArray initI");
             if (command ==="turn-in") fder.populate("initArray");
             f = await fder;
@@ -2669,6 +2736,7 @@ client.on("message", async (message) => {
           }
 
           if (phase.reacts && phase.reacts.length) {
+            await CharacterState.updateMany({fecht:f._id}, {initReact:0});
             if (phase.dmReacts && phase.dmReacts.length) {
               await channel.send(new Discord.RichEmbed({description:"Check (DM) direct messages from me AFTER you've tapped your reaction down below:"}));
             } else {
