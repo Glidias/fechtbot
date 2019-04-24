@@ -79,7 +79,7 @@ const FechtSchema = new Schema(
             }],
             initVal: {
                 type: Number,
-                default: 1
+                default: 0
             },
             initSingle: {
                 type: Boolean,

@@ -160,8 +160,8 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId, charS
       splOptions = c.initExpr.split("\\");
       let result = DICE.roll(c.initExpr);
       cInitExprVal = splOptions[1] && splOptions[1].includes("s") ? result.successes : result.total;
-      if (c.initNegative && c.initVal > 0) {
-        cInitExprVal = -c.initVal;
+      if (c.initNegative && cInitExprVal > 0) {
+        cInitExprVal = -cInitExprVal;
       }
       c.initFloat = Math.random();
       c.initVal = cInitExprVal;
@@ -182,14 +182,17 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId, charS
         if (phase.initReact) {
           if (!!c.initReact || phase.initReact !== 2) c.initVal = c.initReact;
         }
-
-        c.initFloat += floatUseCharInitInt ? parseInt(cInitExprVal) : 0;
+      
+        c.initFloat += floatUseCharInitInt ? parseInt(Math.abs(cInitExprVal)) : 0;
       }
-
       await c.save();
     }
   }
   
+  
+  charStates = charStates.filter(c=>!c.dead);
+ 
+
   if (!phase.initIncludeZero) {
     charStates = charStates.filter(c=>c.initVal!==0);
   }
@@ -316,15 +319,22 @@ async function setupInitiative(channel, message, remainingContents, command) {
     remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
     remainingContents = remainingContents.trim();
   } else {
-
+    
     if (message.mentions.users.size) {  // emulate single handle entry self
-      let loneMatch = remainingContents.match(new RegExp(CHAR_NAME_REGSTR));
-      let loneHandle = decomposeMention(loneMatch[0]);
-      loneHandle = loneHandle.handle;
-      remainingContents = remainingContents.replace(loneMatch[0], "");
+      charMatches =  getCharNameRegMatches(remainingContents);
+      if (charMatches.length ===1) {  // emulate prefix colon case
+        let loneMatch = remainingContents.match(new RegExp(CHAR_NAME_REGSTR));
+        let loneHandle = decomposeMention(loneMatch[0]);
+        loneHandle = loneHandle.handle;
+        remainingContents = remainingContents.replace(loneMatch[0], "");
+        if (loneHandle) remainingContents = ":"+loneHandle + " " + remainingContents;
+      } else {  // multiple matches need to set bulkSetOthersinitiative to true
+        bulkSetOthersInitiative = true;
+        remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
+      }
       remainingContents = remainingContents.trim();
-      if (loneHandle) remainingContents = ":"+loneHandle + " " + remainingContents;
     }
+
     // duplicate
     if (remainingContents.startsWith(":") && remainingContents.charAt(1)!=":") {
       let li = remainingContents.indexOf(" ");
@@ -407,17 +417,25 @@ async function setupInitiative(channel, message, remainingContents, command) {
     if (characterStates.length) {
       if (!usingTempInit) {
         let i = characterStates.length;
-        while(--i > -1) {
-          characterStates[i].initExpr = remainingContents.split("\\")[0] + flagTrace;
-          await characterStates[i].save();
+        if (!polarityChange ) {
+          while(--i > -1) {
+            characterStates[i].initExpr = remainingContents.split("\\")[0] + flagTrace;
+            await characterStates[i].save();
+          }
+        } else {
+          while(--i > -1) {
+            characterStates[i].initNegative = rollResult.renderedExpression === "-" || (rollResult.renderedExpression === "~" && !characterStates[i].initNegative );
+            await characterStates[i].save();
+          }
         }
       } else {  
         pingBackMsg(message, "Sorry I don't support bulk setting/shuffling of initiatives while a phase is in progress!");
         return;
       }
    
-
-      await pubChannel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set as:* `"+remainingContents+flagTrace+"`");
+      if (!polarityChange)
+        await pubChannel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set as:* `"+remainingContents+flagTrace+"`");
+      else await pubChannel.send(prefixer+characterStates.map(c=>c.mention).join(", ")+ " *has "+descInit+" set to:* "+(rollResult.renderedExpression === "-" ? "`Negative`" : rollResult.renderedExpression === "+" ? "`Positive`" : "`~flip~`"));
     }
 
     if (missingArr.length) {
@@ -534,14 +552,12 @@ function replaceInlineRollMatches(t, r) {
   return results ? "**"+r.replace(/\\/g, "\\\\")+"** `"+results+"`" : "!\\`"+r+"\\`";
 }
 
-function getRosterTag(c) {
-  return "• "+c.mention;
-}
 
-async function updateBodyWithFecht(f, channel, alwaysShowSides, purgeInvalidCharStates) {
+
+async function updateBodyWithFecht(f, channel, alwaysShowSides, purgeInvalidCharStates, charStates) {
   let b = await channel.fetchMessage(f.latest_body_id);
   if (b) {
-    return b.edit(await getBodyRenderOfFecht(f, channel, alwaysShowSides, purgeInvalidCharStates));
+    return b.edit(await getBodyRenderOfFecht(f, channel, alwaysShowSides, purgeInvalidCharStates, charStates));
   }
 }
 
@@ -552,8 +568,19 @@ async function deleteDataFromChannel(channel) {
   await CharacterState.deleteMany({channel_id:channel.id}).catch(errHandler);
 }
 
-function getRoster(roster) {
-  return roster.map(getRosterTag).join("\n");
+function getBullet(c,f) {
+  if (f.initStep === 0 && f.miscTurnCount === 0) {
+    return c.initExpr === "0" ? "○ " : c.initNegative ? "• " : "◘ ";
+  }
+  return (c.initVal === 0 ? "○ " : c.initVal < 0 ? "• "  : "◘ ");
+}
+
+function getRoster(roster, f) {
+  return roster.map(c=> {
+    let deadTag = c.dead ? c.dead === 1 ? "~~" :  "*" 
+                  : "";
+    return getBullet(c, f)+deadTag+c.mention+deadTag;
+  }).join("\n");
 }
 
 function canAdvanceForward(fecht) {
@@ -910,6 +937,103 @@ async function checkAndReactMessage(message, footerTurnMessage) {
 
 }
 
+
+/**
+ * 
+ * @param {Discord.Message} message 
+ * @param {string} remainingContents 
+ */
+async function getCharStateUserScope(f, message, remainingContents, enableEveryone) {
+  let gotEveryone = message.mentions.everyone && enableEveryone;
+  let settingOthersInitiative = gotEveryone || message.mentions.users.size >=2 || (!!message.mentions.users.size && message.mentions.users.first().id !== message.author.id);
+
+  if (!gotEveryone && message.mentions.everyone) {
+    remainingContents = remainingContents.replace(/@everyone/g, "");
+    remainingContents = remainingContents.trim();
+  }
+
+  let handle = "";
+  let mention = getMentionChar(message.author.id, handle);
+  let charMatches = null;
+  let characterStates = null;
+  let charState = null;
+  let origCharStates = null;
+
+  let bulkSetOthersInitiative = settingOthersInitiative;
+  if (settingOthersInitiative) {
+    if (gotEveryone) {
+      characterStates = await CharacterState.find({fecht:f._id}).catch(errHandler);
+      if (!characterStates) {
+        characterStates = [];
+      }
+      origCharStates = characterStates;
+      charMatches = characterStates.map((c=>c.mention));
+      remainingContents = remainingContents.replace(/@everyone/g, "");
+      remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
+      remainingContents.trim();
+    } else {
+      charMatches =  getCharNameRegMatches(remainingContents);
+      if (message.mentions.users.size === 1) {
+        mention = charMatches[0];
+        bulkSetOthersInitiative = false;  // flag off treat as if setting "own" initiative with different mention
+      }
+    }
+    remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
+    remainingContents = remainingContents.trim();
+  } else {
+    
+    if (message.mentions.users.size) {  // emulate single handle entry self
+      charMatches =  getCharNameRegMatches(remainingContents);
+      if (charMatches.length ===1) {  // emulate prefix colon case
+        let loneMatch = remainingContents.match(new RegExp(CHAR_NAME_REGSTR));
+        let loneHandle = decomposeMention(loneMatch[0]);
+        loneHandle = loneHandle.handle;
+        remainingContents = remainingContents.replace(loneMatch[0], "");
+        if (loneHandle) remainingContents = ":"+loneHandle + " " + remainingContents;
+      } else {  // multiple matches need to set bulkSetOthersinitiative to true
+        bulkSetOthersInitiative = true;
+        remainingContents = remainingContents.replace(new RegExp(CHAR_NAME_REGSTR, "g"), "");
+      }
+      remainingContents = remainingContents.trim();
+    }
+
+    // duplicate
+    if (remainingContents.startsWith(":") && remainingContents.charAt(1)!=":") {
+      let li = remainingContents.indexOf(" ");
+        if (li >=0) {
+          handle = remainingContents.slice(1, li);
+          remainingContents = remainingContents.slice(li) || "";
+          remainingContents = remainingContents.trim();
+        } else {
+          handle = remainingContents.slice(1) || "";
+          remainingContents = "";
+        }
+        mention = getMentionChar(message.author.id, handle);
+    }
+  }
+
+
+  let emptyQuery = false;
+  if (bulkSetOthersInitiative) {
+    if (!characterStates) characterStates = await CharacterState.find({fecht:f._id});
+    if (!characterStates) characterStates = [];
+    origCharStates = characterStates;
+    if (!characterStates.length) {
+      emptyQuery = true;
+    }
+    let hashChk = new Set(charMatches);
+    characterStates = characterStates.filter(c=>hashChk.has(c.mention));
+  } else {
+    charState = await CharacterState.findOne({fecht:f._id, mention});
+    if (!charState) {
+      emptyQuery = true;
+    }
+  }
+
+  return {mention,  emptyQuery, origCharStates, charState, characterStates, charMatches, bulkSetOthersInitiative, settingOthersInitiative, remainingContents}
+
+}
+
 function getUserCharHash(matches) {
   var i = matches.length;
   var hash = {};
@@ -1188,7 +1312,7 @@ if (genesis || alwaysShowSides) {
  for (i =0; i< len; i++) {
     if (fieldCount >= 25) return;
     let sideName = f.sides[i];
-    embed.addField(sideName, hashTeams[sideName] ? getRoster(hashTeams[sideName]) : "*::*", true);
+    embed.addField(sideName, hashTeams[sideName] ? getRoster(hashTeams[sideName], f) : "*::*", true);
     fieldCount++;
   }
 } else {
@@ -1211,20 +1335,20 @@ if (genesis || alwaysShowSides) {
     }
    }
     if (sideCount === 1 && multiCount === 0) {  // 1 vx ?
-      embed.description += "\n"+ getRoster(hashTeams[singleTeam]) + " *`vs`* " + "?";
+      embed.description += "\n"+ getRoster(hashTeams[singleTeam], f) + " *`vs`* " + "?";
     } else if (sideCount === 2 && multiCount === 1) {  // 1 vx X
-       embed.description += "\n"+ getRoster(hashTeams[singleTeam]) + " *`vs`*";
-       embed.addField(multiTeam, getRoster(hashTeams[multiTeam]), true); 
+       embed.description += "\n"+ getRoster(hashTeams[singleTeam], f) + " *`vs`*";
+       embed.addField(multiTeam, getRoster(hashTeams[multiTeam], f), true); 
        fieldCount++;
     } else if (sideCount ===2 && multiCount === 0) { // 1 vs 1
-       embed.description += "\n"+ getRoster(hashTeams[singleTeam]) + "  *`vs`*  " + getRoster(hashTeams[singleTeam2]) ;
+       embed.description += "\n"+ getRoster(hashTeams[singleTeam], f) + "  *`vs`*  " + getRoster(hashTeams[singleTeam2], f) ;
     } else {
       len - f.sides.length;
        for (i =0; i< len; i++) {
         if (fieldCount >= 25) return;
           let sideName = f.sides[i];
           if (hashTeams[sideName]) {
-            embed.addField(sideName, getRoster(hashTeams[sideName]), true); 
+            embed.addField(sideName, getRoster(hashTeams[sideName], f), true); 
             fieldCount++;
           }
         }
@@ -1251,17 +1375,19 @@ if (genesis || alwaysShowSides) {
 async function removeMentionsFromInitLadder(f, matches) {
   if (!f.initArray || f.initArray.length ===0) return;
   let newArray = [];
+
   let setMatches = new Set(matches);
+
   let len = f.initArray.length;
   for (let i=0;i<len; i++) {
     let c = f.initArray[i];
-    if (!setMatches.has(c.mention)) {
+    if (i < f.initI || !setMatches.has(c.mention)) {
       newArray.push(c);
     }
   }
-
   if (newArray.length === f.initArray.length) return;
   f.initArray = newArray;
+
   await Fecht.updateOne({_id:f._id}, {initArray:newArray});
 }
 
@@ -1495,6 +1621,14 @@ client.on("messageReactionRemove", (messageReaction, user) => {
 
 });
 */
+
+function getMentionIndexFromCharStates(charStates, mention) {
+  var i= charStates.length;
+  while(--i > -1) {
+    if (charStates[i].mention === mention) return i;
+  }
+  return -1;
+}
 
 client.on("channelDelete", async (channel) => {
   if (CHANNELS_FECHT[channel.id] !== undefined) {
@@ -1804,7 +1938,7 @@ client.on("message", async (message) => {
     let m;
     let phase;
     let handle;
-    
+    let phaseSelectionMode;
 
     // Fecht only commands
     switch(command) {
@@ -2026,6 +2160,11 @@ client.on("message", async (message) => {
 
         await checkAndReactMessage(message, m);
       return;
+      case 'refresh':
+        message.delete();
+        f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount");
+        updateBodyWithFecht(f, channel);
+      return;
        case 'sides-purge':
        case 'sides-hide':
          message.delete();
@@ -2061,7 +2200,82 @@ client.on("message", async (message) => {
        updateBodyWithFecht(f, channel, true);
 
       return;
-      //case 'delete':
+     
+      case 'kill':
+      case 'restore':
+      case 'skip':
+      message.delete();
+      
+      f = await Fecht.findOne({channel_id:channel.id}, "phases latest_footer_id gamemaster_id latest_body_id sides phaseCount roundCount initStep miscTurnCount backtrackCount initArray initI").populate("initArray");
+     
+      if (message.author.id !== f.gamemaster_id) {
+        sendTempMessage(getMentionChar(message.author.id, "")+" Only GMs can use ths command!", channel);
+        return;
+       }
+
+       if (!message.mentions.users.size) {
+        sendTempMessage("Please mention users for command: `" + command+"`", channel);
+        return;
+       }
+
+       let scopeChars = await getCharStateUserScope(f, message, remainingContents);
+
+       m = await channel.fetchMessage(f.latest_footer_id);
+       phaseSelectionMode = m.embeds[0].title === TITLES.enteringPhase || m.embeds[0].title === TITLES.enteringPhaseInitRevealed || !m.embeds[0].title;
+
+      let deadVal = command === "kill" ? 1 : command === "restore" ? 0 : 2;
+      if (scopeChars.bulkSetOthersInitiative) {
+        if (scopeChars.emptyQuery) {
+          sendTempMessage(getMentionChar(message.author.id, "")+" No fechters at the moment. Use `!join` to engage in battle", channel);
+          return;
+        }
+        let i = scopeChars.characterStates.length;
+        if (i === 0) {
+          sendTempMessage(scopeChars.charMatches.join(", ")+", couldn't find any registered fechters from your query.", channel);
+          return;
+        }
+        let gotPushBack = false;
+        while(--i > -1) {
+          scopeChars.characterStates[i].dead = deadVal;
+          await scopeChars.characterStates[i].save();
+          if (command  === "restore" && !phaseSelectionMode && getMentionIndexFromCharStates(f.initArray, scopeChars.characterStates[i].mention)<0) {
+            gotPushBack = true;
+            f.initArray.push( scopeChars.characterStates[i])
+          }
+        }
+        if (!phaseSelectionMode) {
+          if (command !== "restore") await removeMentionsFromInitLadder(f, scopeChars.characterStates.map(c=>c.mention));
+          else if (gotPushBack) {
+            shuffleInitiatives(f, false, null, f.initArray);
+          }
+        }
+      } else {
+        if (scopeChars.emptyQuery) {
+          sendTempMessage(scopeChars.mention+", aren't registered to this fecht.", channel);
+          return;
+        }
+        scopeChars.charState.dead = deadVal;
+        await scopeChars.charState.save();
+
+        if (!phaseSelectionMode) {
+
+          if (command !== "restore") await removeMentionsFromInitLadder(f, [scopeChars.charState.mention]);
+          else {
+            if (getMentionIndexFromCharStates(f.initArray, scopeChars.charState.mention)<0) {
+              f.initArray.push(scopeChars.charState);
+              shuffleInitiatives(f, false, null, f.initArray);
+            }
+          }
+        }
+      }
+
+      await updateBodyWithFecht(f, channel, false, false, scopeChars.origCharStates );
+
+      if (m.embeds[0].title === TITLES.resolution || m.embeds[0].title === TITLES.turnEnded) {
+        m.edit( new Discord.RichEmbed({ color:m.embeds[0].color, title:m.embeds[0].title, description: getCarryOnMsg(f)}) );
+      }
+
+      return;
       case 'join':
         message.delete();
 
@@ -2071,7 +2285,7 @@ client.on("message", async (message) => {
       
         if (message.mentions.users.size) {
           if (message.author.id !== f.gamemaster_id) {
-            sendTempMessage(getMentionChar(message.author.id, "")+" Only GMs can mention other players to join a side!")
+            sendTempMessage(getMentionChar(message.author.id, "")+" Only GMs can mention other players to join a side!", channel);
             return;
           }
 
@@ -2156,7 +2370,7 @@ client.on("message", async (message) => {
             return;
           }
 
-        let phaseSelectionMode = lastFooterTitle === TITLES.enteringPhase || lastFooterTitle === TITLES.enteringPhaseInitRevealed || !lastFooterTitle;
+       phaseSelectionMode = lastFooterTitle === TITLES.enteringPhase || lastFooterTitle === TITLES.enteringPhaseInitRevealed || !lastFooterTitle;
         let phasesArray = f.phases && f.phases.length ? f.phases : [];
         let backtrackCount = 0;
         let newPhaseCount = f.phaseCount;
