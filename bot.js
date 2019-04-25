@@ -2570,7 +2570,7 @@ client.on("message", async (message) => {
         if (prePhase) {
           await shuffleInitiatives(f, true)
         }
-
+ 
         if (!canAdvanceForward(f)) {
           sendTempMessage("No more turns found in current initiative track!", channel);
            
@@ -2585,17 +2585,19 @@ client.on("message", async (message) => {
        
         let mentionsSentence = f.initArray[f.initI].mention;
         let initVal = f.initArray[f.initI].initVal;
+        f.initI++;
         if (!phase.initSingle) {
           let ms;
-          while(ms=f.initArray[++f.initI]) {
+          while(ms=f.initArray[f.initI]) {
             if (ms.initVal === initVal)
               mentionsSentence += " " +ms.mention;
             else break;
+            f.initI++;
           }
         }
-      
+       
         await Fecht.updateOne({_id:f._id}, {initI:f.initI, initStep:f.initStep});
-
+        
         remainingContents = mentionsSentence;
       //  console.log("Triggering:"+f.initI + "/ "+f.initArray.length + "::"+f.initStep);
        // console.log(mentionsSentence);
