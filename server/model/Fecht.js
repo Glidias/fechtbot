@@ -57,10 +57,6 @@ const FechtSchema = new Schema(
             type: Number,
             default:0
         },
-        negativeSlots: {
-            type: Boolean,
-            default: false
-        },
         sides: [{
             type: String,
             required: true,
@@ -137,6 +133,10 @@ const FechtSchema = new Schema(
             resolveSort: {
                 type: Number,
                 default: 0
+            },
+            negativeSlots: {
+                type: Boolean,
+                default: false
             }
         }]
     },
