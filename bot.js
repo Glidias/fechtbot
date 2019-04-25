@@ -737,7 +737,6 @@ async function rollResolvableMsg(message) {
   let resultRoll = await rollMessageFinal(message, rem, dec.id, slot);
 
   let manuever = await Manuever.findOne({channel_id:message.channel.id, slot:slot});
-  console.log(manuever);
   // await Manuever.deleteOne({channel_id:message.channel.id, slot:slot});
   if (resultRoll && manuever.react && manuever.characterState) {
     await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverReactResultValue(manuever, resultRoll)}).catch(errHandler);
@@ -1193,7 +1192,7 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
     let manueversSoFar = await Manuever.find({channel_id:channel.id, replyTo:0});
     i = manueversSoFar.length;
     while(--i > -1) {
-      if (manueversSoFar[i].slot > slotCount) slotCount = manueversSoFar[i].slot;
+      if (Math.abs(manueversSoFar[i].slot) > slotCount) slotCount = Math.abs(manueversSoFar[i].slot);
     }
 
     len = matches.length;
@@ -1203,7 +1202,12 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
         continue;
       }
       a.forEach((obj)=> {
-        if (!obj.replyTo) obj.slot = ++slotCount;
+        if (!obj.replyTo) {
+          obj.slot = ++slotCount;
+          if (phase.negativeSlots && obj.characterState && obj.characterState.initVal < 0 && obj.slot > 0) {
+            obj.slot = -obj.slot;
+          }
+        } 
         else {
           if (rpCountHash["_"+obj.replyTo] === undefined) {
             rpCountHash["_"+obj.replyTo] = 0;
