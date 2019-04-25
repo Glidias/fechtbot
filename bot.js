@@ -2320,7 +2320,8 @@ client.on("message", async (message) => {
 
       sendTempMessage("`"+command+"` executed on: "+remainingContents, channel);
 
-      await updateBodyWithFecht(f, channel, false, false, scopeChars.origCharStates );
+      // let gm manually refresh if he needs to
+     // await updateBodyWithFecht(f, channel, false, false, scopeChars.origCharStates );
       
 
       if (m.embeds[0].title === TITLES.resolution || m.embeds[0].title === TITLES.turnEnded) {
