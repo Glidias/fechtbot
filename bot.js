@@ -736,10 +736,11 @@ async function rollResolvableMsg(message) {
   rem.handle = dec.handle;
   let resultRoll = await rollMessageFinal(message, rem, dec.id, slot);
 
-  let manuever = Manuever.findOne({channel_id:message.channel.id, slot:slot});
+  let manuever = await Manuever.findOne({channel_id:message.channel.id, slot:slot});
+  console.log(manuever);
   // await Manuever.deleteOne({channel_id:message.channel.id, slot:slot});
   if (resultRoll && manuever.react && manuever.characterState) {
-    await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverReactResultValue(manuever, rollResult)}).catch(errHandler);
+    await CharacterState.updateOne({_id:manuever.characterState}, {initReact:getManueverReactResultValue(manuever, resultRoll)}).catch(errHandler);
   }
   if (manuever) {
     await Manuever.deleteOne({_id:manuever._id});
@@ -919,7 +920,8 @@ async function getManueverObj(rem, react, channel, mention) {
   }
 
   if (rem.charState) {
-    obj.characterState = rem.charState._id;
+    obj.characterState = rem.charState;
+
   }
   return obj;
 }
@@ -1151,7 +1153,7 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
       mention = getMentionChar(a.user_id, a.handle);
       rem.charState = charStatesHash[mention];
       if (!mentionHashArr[mention]) mentionHashArr[mention] = [];
-      man = await getManueverObj(rem, true, channel, mention, null);
+      man = await getManueverObj(rem, true, channel, mention);
       mentionHashArr[mention].push(man);
     }
   }
@@ -1177,8 +1179,7 @@ async function endTurn(channel, phase, footerMessage, fecht, skipManuevers) {
     
       if (!mentionHashArr[mention]) mentionHashArr[mention] = [];
       rem.charState = charStatesHash[mention];
-      let man = await getManueverObj(rem, true, channel, mention, null);
-
+      let man = await getManueverObj(rem, false, channel, mention);
       mentionHashArr[mention].push(man);
     }, true, (m)=> {
       return m.author.id !== client.user.id || !(m.content.startsWith("|") || (m.author.id === client.user.id && m.embeds && m.embeds[0] && m.embeds[0].author && !m.embeds[0].author.name.startsWith(OUTGAME_PREFIX) ));
