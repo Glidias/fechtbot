@@ -162,6 +162,9 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId, charS
       cInitExprVal = splOptions[1] && splOptions[1].includes("s") ? result.successes : result.total;
      
       c.initFloat = Math.random();
+      if (c.initNegative && cInitExprVal > 0) {
+        cInitExprVal = -cInitExprVal;
+      }
       c.initVal = cInitExprVal;
 
       if (phase.initReact || phase.initVal || phase.initTeam) {
@@ -184,9 +187,7 @@ async function shuffleInitiatives(f, enteringPhase, checkCharStateShiftId, charS
         c.initFloat += floatUseCharInitInt ? parseInt(Math.abs(cInitExprVal)) : 0;
       }
 
-      if (c.initNegative && c.initVal > 0) {
-        c.initVal = -c.initVal;
-      }
+     
       await c.save();
     }
   }
